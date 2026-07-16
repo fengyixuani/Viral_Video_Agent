@@ -1,0 +1,7 @@
+uploads/
+logs/
+outputs/
+.comate/
+__pycache__/
+*.pyc
+.venv/

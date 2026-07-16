@@ -1,0 +1,2 @@
+agentscope>=2.0.0
+python-frontmatter>=1.1.0
