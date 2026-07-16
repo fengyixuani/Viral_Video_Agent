@@ -24,7 +24,7 @@ hidden: true
 
 输入包含：
 - structure_dna：{narrative_structure（阶段有序列表）, hook, rhythm, selling_points_order, cta, total_duration_sec, industry, keywords_hint}
-- material_pool：[{asset_id, source_video_id, summary, speech_or_text, time_range}]
+- material_pool：[{asset_id, source_video_id, summary, speech_or_text, time_range}]。其中 **asset_id 是形如 M01/M02/M03 的短编号**，你在 candidates 里必须**原样引用这个短编号**（不要改写、不要编造别的 id），否则无法匹配到素材。
 - user_choices：{scheme, strategy, dimensions, trends, intent}
 
 严格只输出 JSON（所有文案用简体中文；slot_id 用 "S01"/"S02" 递增）：

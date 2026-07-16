@@ -22,7 +22,12 @@ SKILL_ID = "orchestration_script"
 
 
 def _collect_material_pool(material_understanding: dict) -> tuple[list, dict]:
-    """从素材理解结果收集素材池（一句话描述 + 该片段实际口播文字）。"""
+    """从素材理解结果收集素材池（一句话描述 + 该片段实际口播文字）。
+
+    给每条素材分配一个**短稳定 id**（M01、M02…）供编排 LLM 复述——真实的 global_asset_id
+    长达 80+ 字符（含 @/-/:: 与时间戳），LLM 无法逐字 echo 回来，会导致 asset_id 校验全灭、
+    所有镜头误判为"生成"。``index`` 按 short_id 建键；entry 里同时保留真实 ``asset_id``。
+    """
     pool = []
     index = {}
     for parsed in (material_understanding or {}).values():
@@ -36,7 +41,9 @@ def _collect_material_pool(material_understanding: dict) -> tuple[list, dict]:
             gid = seg.get("global_asset_id") or f"{svid}::{seg.get('asset_id', '')}"
             summary = seg.get("one_sentence_summary") or seg.get("visual_description", "")
             speech = seg.get("speech_or_text") or ""
+            short_id = f"M{len(pool) + 1:02d}"
             entry = {
+                "short_id": short_id,
                 "asset_id": gid,
                 "source_video_id": svid,
                 "source_path": seg.get("source_path") or parent_path,
@@ -45,7 +52,7 @@ def _collect_material_pool(material_understanding: dict) -> tuple[list, dict]:
                 "time_range": seg.get("source_time_range", ""),
             }
             pool.append(entry)
-            index[gid] = entry
+            index[short_id] = entry
     return pool, index
 
 
@@ -257,7 +264,11 @@ async def orchestrate_structure_first(reference_template: dict, material_underst
 
     user = json.dumps({
         "structure_dna": structure_dna,
-        "material_pool": pool,
+        "material_pool": [
+            {"asset_id": e["short_id"], "source_video_id": e["source_video_id"],
+             "summary": e["summary"], "speech_or_text": e["speech_or_text"], "time_range": e["time_range"]}
+            for e in pool
+        ],
         "user_choices": {
             "scheme": scheme_name,
             "strategy": material_strategy,
@@ -305,10 +316,11 @@ async def orchestrate_structure_first(reference_template: dict, material_underst
             if not isinstance(c, dict):
                 continue
             aid = c.get("asset_id", "")
-            if aid and aid in index and aid not in {v["asset_id"] for v in valid}:
+            if aid and aid in index and aid not in {v["short_id"] for v in valid}:
                 entry = index[aid]
                 valid.append({
-                    "asset_id": aid,
+                    "short_id": aid,
+                    "asset_id": entry["asset_id"],  # 映射回真实 global_asset_id 供下游解析
                     "source_video_id": entry["source_video_id"],
                     "source_path": entry.get("source_path", ""),
                     "source_time_range": c.get("source_time_range") or entry["time_range"],
