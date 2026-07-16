@@ -22,6 +22,7 @@ import trends
 import obs
 import connector
 import projects
+from agent_edit import loop as agent_edit_loop
 from agent import ReplicationAgent
 from inputs import load
 
@@ -97,6 +98,8 @@ class Handler(BaseHTTPRequestHandler):
             self._sse(AGENT.replicate_stream)
         elif path == "/api/edit":
             self._edit()
+        elif path == "/api/agent_edit":
+            self._agent_edit()
         else:
             self.send_error(404)
 
@@ -250,6 +253,45 @@ class Handler(BaseHTTPRequestHandler):
                     emit(event)
         except Exception as exc:
             _log.error("edit stream failed: %s", exc, exc_info=True)
+            traceback.print_exc()
+            try:
+                emit({"type": "error", "message": str(exc)})
+            except (BrokenPipeError, ConnectionResetError):
+                return
+        try:
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _agent_edit(self):
+        """纯 Agent 剪辑链路（agent_cut）：剪辑 Agent + 审片 Agent 重剪循环，流式回传。"""
+        payload = self._payload()
+        strategy_path = str(payload.get("strategy_path", "")).strip()
+        enable_bgm = bool(payload.get("enable_bgm", True))
+        max_loops = payload.get("max_loops")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def emit(event):
+            self.wfile.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            async def drain():
+                if not strategy_path:
+                    emit({"type": "error", "message": "缺少 strategy_path"})
+                    return
+                async for event in agent_edit_loop.agent_edit_stream(
+                        strategy_path, enable_bgm=enable_bgm,
+                        max_loops=int(max_loops) if max_loops else None):
+                    emit(event)
+            asyncio.run(drain())
+        except Exception as exc:
+            _log.error("agent_edit stream failed: %s", exc, exc_info=True)
             traceback.print_exc()
             try:
                 emit({"type": "error", "message": str(exc)})
