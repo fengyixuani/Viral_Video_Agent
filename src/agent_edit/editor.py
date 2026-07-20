@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 
 import obs
+from agent_edit.caption_tool import render_caption, CAPTION_AVAILABLE
 
 _log = obs.get_logger("agent_editor")
 
@@ -25,18 +26,8 @@ try:
 except Exception:  # pragma: no cover
     _FFMPEG = os.getenv("FFMPEG", "ffmpeg")
 
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    _PIL_OK = True
-except Exception:  # pragma: no cover
-    _PIL_OK = False
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CJK_FONT = next((f for f in [
-    "/usr/share/fonts/google-droid/DroidSansFallback.ttf",
-    "/usr/share/fonts/truetype/droid/DroidSansFallback.ttf",
-] if os.path.isfile(f)), "")
-_CAPTION_OK = _PIL_OK and bool(_CJK_FONT)
+_CAPTION_OK = CAPTION_AVAILABLE
 
 
 def _abspath(path: str) -> str:
@@ -66,42 +57,8 @@ def _run(cmd, timeout=180):
 
 
 def _render_caption_png(text: str, width: int, height: int, out_png: str) -> bool:
-    """把字幕渲染成 width×height 的透明 PNG（底部半透明黑底 + 白字，自动按宽度换行）。"""
-    text = str(text or "").replace("\n", " ").strip()
-    if not text or not _CAPTION_OK:
-        return False
-    font_size = max(28, int(width * 0.055))
-    font = ImageFont.truetype(_CJK_FONT, font_size)
-    max_w = int(width * 0.88)
-    # 按像素宽度换行（CJK 无空格，逐字累加）
-    lines, cur = [], ""
-    for ch in text:
-        trial = cur + ch
-        w = font.getbbox(trial)[2]
-        if w > max_w and cur:
-            lines.append(cur)
-            cur = ch
-        else:
-            cur = trial
-    if cur:
-        lines.append(cur)
-    lines = lines[:4]
-    line_h = int(font_size * 1.35)
-    block_h = line_h * len(lines)
-    pad = int(font_size * 0.5)
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    box_top = height - block_h - pad * 2 - int(height * 0.06)
-    draw.rectangle([int(width * 0.04), box_top, int(width * 0.96), box_top + block_h + pad * 2],
-                   fill=(0, 0, 0, 150))
-    y = box_top + pad
-    for ln in lines:
-        w = font.getbbox(ln)[2]
-        draw.text(((width - w) // 2, y), ln, font=font, fill=(255, 255, 255, 255),
-                  stroke_width=2, stroke_fill=(0, 0, 0, 220))
-        y += line_h
-    img.save(out_png)
-    return True
+    """转调字幕烧录工具（agent_edit.caption_tool.render_caption）。"""
+    return render_caption(text, width, height, out_png)
 
 
 def build_video(clips: list, out_path: str, *, bgm_path: str = "",
@@ -122,9 +79,17 @@ def build_video(clips: list, out_path: str, *, bgm_path: str = "",
                             "ok": False, "error": "source not found", "source": clip.get("source_path", "")})
                 continue
             start, end = _parse_range(clip.get("source_time_range", ""))
-            dur = max(0.3, float(clip.get("target_duration") or (end - start) or 2.0))
+            seg_len = (end - start) if end > start else 0.0
+            # 时长优先看效果：普通镜用「所选片段的自然长度」，不去硬凑 target_duration（避免拉慢/垫白帧）；
+            # 配音镜例外，时长以 TTS 音频为准（target_duration 已被设为配音时长）。
+            if clip.get("tts_audio_path"):
+                dur = max(0.3, float(clip.get("target_duration") or seg_len or 2.0))
+            else:
+                dur = max(0.3, seg_len or float(clip.get("target_duration") or 2.0))
             speed = float(clip.get("speed") or 1.0)
             caption = clip.get("caption_text", "") or ""
+            if clip.get("burn_caption") is False:
+                caption = ""
             seg = os.path.join(work, f"seg_{i:02d}.mp4")
 
             vchain = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
@@ -136,22 +101,41 @@ def build_video(clips: list, out_path: str, *, bgm_path: str = "",
             cap_png = os.path.join(work, f"cap_{i:02d}.png")
             cap_burned = bool(caption) and _render_caption_png(caption, width, height, cap_png)
 
-            base = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                    "-ss", f"{max(0.0, start):.3f}", "-i", src, "-t", f"{dur:.3f}"]
-            if cap_burned:
-                base += ["-i", cap_png, "-filter_complex",
-                         f"[0:v]{vchain}[bg];[bg][1:v]overlay=0:0:format=auto[v]",
-                         "-map", "[v]", "-map", "0:a?", "-af", af]
+            tts_audio = _abspath(clip.get("tts_audio_path", "")) if clip.get("tts_audio_path") else ""
+            if tts_audio and os.path.isfile(tts_audio):
+                # 克隆配音镜：视频取源片段（不足配音时长则冻结末帧补足），音轨换成 TTS wav
+                seg_len = (end - start) if end > start else dur
+                pad = max(0.0, dur - seg_len)
+                vtts = vchain + (f",tpad=stop_mode=clone:stop_duration={pad:.3f}" if pad > 0.05 else "")
+                base = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                        "-ss", f"{max(0.0, start):.3f}", "-i", src, "-i", tts_audio]
+                if cap_burned:
+                    base += ["-i", cap_png, "-filter_complex",
+                             f"[0:v]{vtts}[bg];[bg][2:v]overlay=0:0:format=auto[v]",
+                             "-map", "[v]", "-map", "1:a"]
+                else:
+                    base += ["-filter_complex", f"[0:v]{vtts}[v]", "-map", "[v]", "-map", "1:a"]
+                base += ["-t", f"{dur:.3f}", "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+                         "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", seg]
             else:
-                base += ["-vf", vchain, "-af", af]
-            base += ["-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", seg]
+                # -ss/-t 作为**输入选项**放在 -i src 之前：精确读取 [start, start+dur]，
+                # 与是否叠加字幕 PNG 无关（放在两个 -i 之间会被误当成后一个输入的选项）。
+                base = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                        "-ss", f"{max(0.0, start):.3f}", "-t", f"{dur:.3f}", "-i", src]
+                if cap_burned:
+                    base += ["-i", cap_png, "-filter_complex",
+                             f"[0:v]{vchain}[bg];[bg][1:v]overlay=0:0:format=auto[v]",
+                             "-map", "[v]", "-map", "0:a?", "-af", af]
+                else:
+                    base += ["-vf", vchain, "-af", af]
+                base += ["-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                         "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", seg]
             ok, err = _run(base, timeout=150)
             ops.append({"idx": i, "slot_id": clip.get("slot_id"), "op": "trim",
                         "source": os.path.basename(src), "source_time_range": clip.get("source_time_range", ""),
                         "target_duration": round(dur, 2), "speed": speed,
                         "caption": caption, "caption_burned": cap_burned,
-                        "ok": ok, "error": err[:200]})
+                        "tts": bool(tts_audio), "ok": ok, "error": err[:200]})
             if ok and os.path.isfile(seg) and os.path.getsize(seg) > 0:
                 seg_paths.append(seg)
 

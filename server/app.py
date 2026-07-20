@@ -23,6 +23,7 @@ import obs
 import connector
 import projects
 from agent_edit import loop as agent_edit_loop
+from agent_edit import tools as agent_edit_tools
 from agent import ReplicationAgent
 from inputs import load
 
@@ -69,6 +70,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"skills": skill_mod.skill_list()})
         elif path == "/api/projects":
             self._json({"projects": projects.list_projects()})
+        elif path == "/api/agent_edit/tools":
+            self._json({"tools": agent_edit_tools.tool_schemas()})
         elif path.startswith("/static/"):
             candidate = os.path.realpath(os.path.join(STATIC_DIR, path[len("/static/"):]))
             if candidate.startswith(os.path.realpath(STATIC_DIR) + os.sep):
@@ -270,6 +273,7 @@ class Handler(BaseHTTPRequestHandler):
         strategy_path = str(payload.get("strategy_path", "")).strip()
         enable_bgm = bool(payload.get("enable_bgm", True))
         max_loops = payload.get("max_loops")
+        review_model = str(payload.get("review_model", "qwen")).strip() or "qwen"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -287,7 +291,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 async for event in agent_edit_loop.agent_edit_stream(
                         strategy_path, enable_bgm=enable_bgm,
-                        max_loops=int(max_loops) if max_loops else None):
+                        max_loops=int(max_loops) if max_loops else None,
+                        review_model=review_model):
                     emit(event)
             asyncio.run(drain())
         except Exception as exc:

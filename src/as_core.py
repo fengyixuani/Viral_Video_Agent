@@ -230,6 +230,20 @@ def _encode_vision_blocks(user: str, media):
     return content_blocks, info_summary
 
 
+def _mentions_json(system: str, content_blocks) -> bool:
+    """wenchain 要求：启用 response_format=json_object 时 messages 必须含 'json' 字样。
+    仅当调用方明确要 JSON（system 或文本块出现 json）才启用，否则自由文本，避免 400。"""
+    if "json" in (system or "").lower():
+        return True
+    if isinstance(content_blocks, str):
+        return "json" in content_blocks.lower()
+    for block in content_blocks or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            if "json" in str(block.get("text", "")).lower():
+                return True
+    return False
+
+
 def _post_wenchain_vision(system: str, content_blocks, model_name: str) -> str:
     if requests is None:
         raise RuntimeError("vision path requires the `requests` package")
@@ -243,8 +257,9 @@ def _post_wenchain_vision(system: str, content_blocks, model_name: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": content_blocks},
         ],
-        "response_format": {"type": "json_object"},
     }
+    if _mentions_json(system, content_blocks):
+        payload["response_format"] = {"type": "json_object"}
     response = requests.post(
         WENCHAIN_BASE_URL.rstrip("/") + "/chat/completions",
         headers={"Authorization": f"Bearer {WENCHAIN_API_KEY}", "Content-Type": "application/json"},

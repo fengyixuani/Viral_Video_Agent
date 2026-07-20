@@ -271,6 +271,7 @@ def build_selected_editing_strategy(*, project_name: str, template: dict, scheme
                         "source_path": alt.get("source_path", ""),
                         "source_time_range": alt.get("source_time_range") or alt.get("time_range", ""),
                         "summary": alt.get("summary", ""),
+                        "speech_or_text": alt.get("speech_or_text", ""),
                         "reason": alt.get("reason", ""),
                     }
                     for alt in (feas.get("alternates") or [])

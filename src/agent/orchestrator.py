@@ -439,6 +439,28 @@ class ReplicationAgent:
         shot_feasibility = (bundle.template or {}).get("feasibility") if isinstance(bundle.template, dict) else {}
         material_understanding = (bundle.template or {}).get("material_understanding") if isinstance(bundle.template, dict) else {}
         mode = (bundle.reproduce_mode or "structure").lower()
+        # 自愈：前端可能因时序（素材理解事件未到）或选历史工程未回填而传空 material_understanding，
+        # 结构优先编排一旦拿到空素材池就会退化成「按参考镜头全量补拍」。这里用素材缓存重建素材池，
+        # 让复刻链路对前端时序不敏感。understand_materials 命中每素材缓存，通常很快。
+        if not material_understanding and bundle.materials:
+            rebuild_key = f"mu-rebuild-{rid}"
+            yield {"type": "step", "phase": "解析", "key": rebuild_key, "state": "running",
+                   "title": "重建素材理解", "thought": f"复刻请求未携带素材理解结果，从缓存重建 {len(bundle.materials)} 项素材的画像"}
+            rebuilt = {}
+            try:
+                async for event in understand_materials(bundle.materials, use_cache=True, task_id=rid):
+                    if event.get("__materials_result__"):
+                        rebuilt = event.get("results", {})
+                        continue
+                    # 重建阶段不重复推送逐素材 step，保持 trace 简洁
+                material_understanding = rebuilt or {}
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("[%s] material_understanding rebuild failed: %s", rid, exc)
+            _log.info("[%s] material_understanding rebuilt: %d results", rid, len(material_understanding))
+            yield {"type": "step", "phase": "解析", "key": rebuild_key, "state": "done",
+                   "title": "重建素材理解完成",
+                   "thought": (f"重建出 {len(material_understanding)} 项素材画像"
+                               if material_understanding else "缓存中无素材理解结果，素材池为空")}
         effective_feasibility = {}
         structure_template = None
         reference_dict = to_jsonable(template)
@@ -470,6 +492,17 @@ class ReplicationAgent:
                     structure_template = event.get("template")
                     continue
                 yield event
+        # 结构优先编排若产出空（素材池为空或编排 Agent 无有效输出），此前会静默退回参考模板的
+        # 全量补拍，导致成片链路/Agent 剪辑「没有可剪辑的镜头」。这里显式告警，避免问题被吞掉。
+        if mode == "structure" and not (structure_template and structure_template.get("shot_slots")):
+            pool_empty = not material_understanding
+            yield {"type": "step", "phase": "编排", "key": f"orch-empty-{rid}", "state": "done",
+                   "title": "结构优先编排未产出可用镜头",
+                   "thought": ("素材池为空（material_understanding 缺失），无法编排出用素材的镜头；"
+                               "请重新「理解爆款」以生成素材理解，或检查素材上传。"
+                               if pool_empty else
+                               "编排 Agent 未返回有效镜头，将退回参考结构做全量补拍。")}
+            _log.warning("[%s] structure-first produced no usable slots (pool_empty=%s)", rid, pool_empty)
         # 复刻分镜缩略图：在 structure_template（dict）上抽帧，再 build_template 带进 ShotSlot。
         # 用线程池并行 ffmpeg，避免同步子进程阻塞事件循环导致后续步骤迟迟不推进。
         if structure_template and effective_feasibility and structure_template.get("shot_slots"):
