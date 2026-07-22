@@ -1,2 +1,17 @@
-agentscope>=2.0.0
-python-frontmatter>=1.1.0
+# requirements.txt —— 运行依赖
+# 说明：模型全部走内网 wenchain OpenAI 兼容网关（无需本地 GPU/大模型）；
+# ffmpeg 由 imageio-ffmpeg 内置，无需系统安装。
+#
+# ASR（口播识别）/ TTS（声音克隆）是**可选功能**，跑在各自独立的 conda 子环境里
+# （torch/funasr/cosyvoice 等只装在那些子环境，不进本 requirements）——见 README §6.3。
+
+# ---- 核心运行依赖（服务启动 + 主链路必需）----
+agentscope==2.0.4            # LLM/Agent 原语（OpenAIChatModel / Toolkit / FunctionTool / AgentState）
+python-frontmatter==1.3.0    # 解析 skills_defs/*/SKILL.md 的 frontmatter
+requests==2.33.1             # wenchain 网关 HTTP 调用（理解、seedream/seedance 生成、BGM 分析、embedding 等）
+imageio-ffmpeg==0.6.0        # 内置 ffmpeg（抽帧 / 探测时长-分辨率 / 剪辑拼接），免装系统 ffmpeg
+
+# ---- 可选依赖（缺失时对应功能优雅降级，不阻断服务启动）----
+librosa==0.11.0              # BGM 卡点节拍检测（tools/media_probe.detect_music_beats）；缺失→跳过卡点
+numpy==2.4.6                 # librosa 依赖
+Pillow==12.3.0               # 字幕烧录渲染（editing/caption_tool）；缺失→字幕能力降级

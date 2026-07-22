@@ -1,0 +1,48 @@
+# CODEOWNERS —— 三人协作归属（编排划归 B 后）
+# 语法：<路径 glob>  <负责人>。合并前由对应负责人评审。把 @A/@B/@C 换成实际用户名。
+# GitHub 规则：后匹配的规则覆盖先匹配的——所以"宽规则在前、专属覆盖在后"。
+#
+# 结构：src/understanding(A·理解) · src/orchestration+editing(B·编排+剪辑) · src/drama(C) · src/shared(共享)
+# 边界契约：A→B = AnalysisResult（契约①）；strategy JSON（契约②）为 B 内部产物。
+
+# ---- 共享层（先写宽规则，后面再被专属规则覆盖）；改动需 A/B/C 至少两人评审 ----
+/src/shared/                              @A @B @C
+/server/app.py                            @A @B @C
+/server/_paths.py                         @A @B @C
+/server/routes_common.py                  @A @B @C
+/server/routes_debug.py                   @A @B @C
+/server/static/index.html                 @A @B @C
+/docs/contracts.md                        @A @B @C
+/README.md                                @A @B @C
+/MODELS.md                                @A @B @C
+/config.env                               @A @B @C
+
+# ---- A：理解（产出 AnalysisResult 契约①）----
+/src/understanding/                       @A
+/server/routes_understanding.py           @A
+/src/shared/tools/understanding.py        @A
+/skills_defs/viral_reference_understanding/ @A
+/skills_defs/user_material_understanding/   @A
+/skills_defs/ecom_understanding/          @A
+/skills_defs/material_coarse_match/       @A
+/skills_defs/material_arbitration/        @A
+
+# ---- B：编排 + 剪辑（吃 AnalysisResult → strategy → 成片；剪辑主职责=Agent 剪辑）----
+/src/orchestration/                       @B
+/src/editing/                             @B
+/server/routes_orchestration.py           @B
+/server/routes_editing.py                 @B
+/src/shared/connector.py                  @B   # legacy：旧 Split 剪辑 run_edit，先不管、暂不维护
+/skills_defs/orchestration_script/        @B
+/skills_defs/orchestration_shot_replicate/ @B
+/skills_defs/agent_edit_editor/           @B
+/skills_defs/agent_edit_reviewer/         @B
+/skills_defs/agent_edit_arbiter/          @B
+/skills_defs/aigc_generator/              @B
+
+# ---- C：AI 短剧复刻（端到端独立）----
+/src/drama/                               @C
+/server/routes_drama.py                   @C
+/src/shared/tools/wenchain_media.py       @C
+/skills_defs/drama_replication/           @C
+/docs/drama_replication.md                @C

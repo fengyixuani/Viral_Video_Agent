@@ -1,108 +1,84 @@
 # Agent 层实现说明
 
-本项目使用 **AgentScope 2.0.4** 承载 LLM 与 Agent 层。所有 LLM 调用都通过 wenchain
-OpenAI-compatible 网关，AgentScope 仅提供 `OpenAIChatModel`、`Agent`、`Toolkit`、
-`FunctionTool` 等原语。
+本项目基于 **AgentScope 2.0.4** 承载 LLM/Agent。所有 LLM/VLM 调用都走内网 wenchain
+OpenAI 兼容网关；AgentScope 仅提供 `OpenAIChatModel` / `Agent` / `Toolkit` /
+`FunctionTool` / `AgentState` 等原语。代码已按三人协作拆分（见 `README.md`）：
+理解(A · `understanding/`) → 编排(B · `orchestration/`) → 剪辑(B · `editing/`)，
+以及独立的 AI 短剧(C · `drama/`)。
 
-## 版本与依赖
+## 依赖与共享运行时
 
-- `agentscope == 2.0.4`
-- `python-frontmatter >= 1.1.0`
+- `agentscope==2.0.4`、`python-frontmatter`（见 `requirements.txt`）。
+- 通用 AgentScope 胶水集中在 **`src/shared/agent_runtime.py::ReplicationAgentBase`**：
+  - `__init__` 引用 `shared/react_agents.py` 的共享业务实例（UNDERSTANDING/PLANNING/
+    GENERATION/EDITING/PACKAGING）并懒构建 understanding/planning 的 Agent+Toolkit；
+  - `_llm_json(phase, system, user, *, vision, media)`：流式调 LLM，把增量当 reasoning
+    转发，末尾解析 JSON；
+  - `_run_tool(toolkit, name, phase, **payload)`：执行 FunctionTool 并发成对 step 事件；
+  - `_last_metadata(...)`：取 `ToolResponse.metadata`。
+- 理解阶段 `UnderstandingAgent`、编排阶段 `OrchestrationAgent` 都继承它。
 
-## 真实使用到的 AgentScope API
+## 各阶段的 Agent
 
-| API | 用途 |
-| --- | --- |
-| `agentscope.model.OpenAIChatModel(stream=True)` | 走 wenchain 网关的 OpenAI 协议流式模型 |
-| `agentscope.credential.OpenAICredential` | 装 `api_key`/`base_url` |
-| `agentscope.message.Msg` / `TextBlock` | 构造 system/user 输入 |
-| `agentscope.message.ToolCallBlock` | 手动触发一个工具调用 |
-| `agentscope.tool.Toolkit` | 组织每个 Agent 的工具集 |
-| `agentscope.tool.FunctionTool` | 从 Python 函数自动推断 schema（依赖签名 + docstring） |
-| `agentscope.tool.ToolResponse` | FunctionTool 的标准返回类型 |
-| `agentscope.state.AgentState` | `Toolkit.call_tool` 需要传入的状态对象 |
-| `agentscope.agent.Agent` | UnderstandingAgent / PlanningAgent 的基类 |
+### A · 理解（`src/understanding/`）
+- **工具规划 Agent** `planner.py::run_understanding_planner`：ReAct 方式从 `TOOL_CATALOG`
+  （`detect_shot_boundaries` / `detect_music_beats` / `transcribe_audio` / `assess_materials`）
+  里决定本次要调用哪些结构化工具，受 `prompts` 之外的 planner 逻辑约束。
+- **视觉理解** `orchestrator.py::UnderstandingAgent.analyze_stream`（模型 `ali-qwen3.7-plus`）：
+  看参考视频、拆分镜（含 `source_time_range` 真实时间轴）、出方案，理解用户素材，
+  做可行性验证 + 仲裁。产出 **AnalysisResult（契约①）**。
 
-## 关键坑
+### B · 编排（`src/orchestration/`）
+- **编排 Agent** `pipeline.py::OrchestrationAgent.replicate_stream`（规划/决策走 `ali-qwen3.7-max`）：
+  吃 AnalysisResult，用 `PLAN_SYSTEM`/`DECIDE_SYSTEM` 做规划+逐镜决策，按 reproduce_mode
+  调 `orchestration.py` 的 `orchestrate_structure_first` / `orchestrate_from_feasibility`，
+  最后 `scriptgen.export_scripts` 落盘 **strategy JSON（契约②）**。
 
-- **`OpenAIChatModel(stream=True)` 返回的是 async generator**：每个 chunk 是
-  `ChatResponse`，其 `.content` 是 `TextBlock`/`ThinkingBlock` 列表，**增量**
-  给出；`ChatResponseBase` 会在最后再 yield 一个 `is_last=True` 的累计块，包含
-  **完整正文**。所以 `as_core.stream` 里我们把非最后的 chunk 当作 reasoning
-  转发（有 `thinking` 用 thinking，没有就把 text 增量当作 reasoning），并从最后
-  一个 `is_last=True` 的 chunk 拿累计正文作为 `{"content": ...}`。
-- **`Toolkit.get_tool_schemas()` 是 async**，测试里要 `asyncio.run` 才能拿到
-  schema 列表。
-- **`ToolCallBlock.input` 是字符串**，必须把 kwargs `json.dumps` 后传入。
-- **`FunctionTool` 从函数签名 + docstring 推断 JSON schema**，所以工具函数
-  的类型注解和 docstring 必须完整。
-- 网关偶尔会拒绝 `video_url`/`image_url` 块，`as_core.stream` 在检测到这种错误
-  信息（"unexpected item type in content" / "video_url" 等）时会自动回退成
-  纯文本再调用一次。
+### B · 剪辑（`src/editing/`）
+- **剪辑 Agent** `loop.py::_run_edit_agent`：真正的 ReAct 循环，工具见 `Tool.md`
+  （retrieve / verify / place / finish / tts_clone），可从全量素材池自由召回。
+- **审片 Agent** `loop.py` + `gemini_review.py`：看成片对照 DNA 打分/提问题，
+  后端可选 `qwen`（画面）或 `gemini`（画面+声音）；不通过则增量重剪（默认最多 N 轮）。
+- **仲裁 Agent** `arbiter.py`：多镜争抢同一素材/时间重叠时裁决归属。
+- **AIGC 补镜 Agent** `aigc.py::generate_missing_shots`（内部每镜 `_run_aigc_slot` 跑 ReAct）：
+  缺失镜头用 seedream+seedance 生成，工具见 `Tool.md`，按镜头数并行、上限 5 个子 Agent。
 
-## Agent 分工
+### C · AI 短剧（`src/drama/`）
+`pipeline.py::run_drama_replication` 分阶段串联：①理解 `understand.py` → ②脚本
+`script.py` → ③三视图/故事板/首帧 `storyboard.py` → ④分片段 i2v + 拼接 `video.py`
+→ ⑤ASR+qwen 验证 `verify.py`，未达标迭代。VLM/LLM 直调（`as_core` + `tools/wenchain_media`），
+不是 FunctionTool ReAct，而是确定性阶段编排。
 
-| Agent | 模型 | 工具集 |
-| --- | --- | --- |
-| `UnderstandingAgent` | `ali-qwen3.7-plus`（视觉） | `parse_reference`, `assess_materials` |
-| `PlanningAgent` | `ali-qwen3.7-max`（文本） | `plan_execute`, `decide_shot`, `generate_shot`, `edit_timeline`, `package_video` |
+## 关键坑（AgentScope）
 
-两个 Agent 都由 `src/agent/react_agents.py` 中的 `build_understanding_agent` /
-`build_planning_agent` 构造。它们持有 `Toolkit` 与共享的 `OpenAIChatModel`
-（`as_core._get_model` 单例，绑定 wenchain 网关）。
+- `OpenAIChatModel(stream=True)` 返回 async generator：chunk 增量给出，末尾一个
+  `is_last=True` 的累计块含完整正文。`as_core.stream` 据此把非最后 chunk 当 reasoning、
+  末块当 `{"content": ...}`。
+- `Toolkit.get_tool_schemas()` 是 async；`ToolCallBlock.input` 必须是 `json.dumps` 后的字符串。
+- `FunctionTool` 从函数签名 + docstring 推断 JSON schema，故工具函数的类型注解与
+  docstring 必须完整。
+- 网关偶尔拒绝 `video_url`/`image_url` 块，`as_core.stream` 检测到相关报错会自动回退纯文本重试。
 
-`ReplicationAgent`（`src/agent/orchestrator.py`）不直接调 `agent.reply`，而是：
+## 模型路由
 
-1. 通过 `Toolkit.call_tool(ToolCallBlock, AgentState)` 触发工具执行，让 AgentScope
-   官方管线负责调度、schema 校验和结果累计。
-2. 结构化 JSON 决策仍由 `as_core.stream` 里的 `OpenAIChatModel` 直连产出（更容易
-   保持 `reasoning/content` 契约）。
+- `as_core.pick_model(vision=True)` → `ali-qwen3.7-plus`（视觉理解、审片、AIGC 回看）
+- `as_core.pick_model(vision=False)` → `ali-qwen3.7-max`（规划/决策/编排等文本）
+- 环境变量覆盖：`VISION_LLM_MODEL` / `TEXT_LLM_MODEL` / `WENCHAIN_BASE_URL` /
+  `WENCHAIN_API_KEY`（默认 `wangpantob_all_video_copy`）/ `USE_WENCHAIN_OPENAI` / `ALLOW_MOCK_LLM`。
 
-需要接真实 ReAct 循环时，改成 `await agent.reply(Msg(...))` 或
-`async for msg in agent.reply_stream(...)` 即可。
+## SSE 事件契约
 
-## SSE 事件映射
+各 stream（`analyze_stream` / `replicate_stream` / `agent_edit_stream` /
+`run_drama_replication`）统一产出：`reasoning` → `step`(running→done) →
+`analysis`/`materials`/`feasibility`/`bgm`（理解）或 `final`（编排）或
+`agent_edit_sample`/`agent_edit_done`（剪辑）或 `data`/`final`（短剧），最后 `[DONE]`。
+前端按这些 `type` 字段对接。
 
-| AgentScope 事件语义 | 我们发送的 SSE 事件 |
-| --- | --- |
-| `ToolCallStartEvent` | `{"type":"step","phase":..,"thought":"调用工具 X","action":"tool: X"}` |
-| `ToolResultEndEvent` | `{"type":"step","phase":..,"thought":"工具 X 返回","observation":...}` |
-| `ThinkingBlockDeltaEvent` / `TextBlockDeltaEvent` | `{"type":"reasoning","phase":..,"text":...}` |
-| 累计 `is_last=True` chunk | 作为最终 JSON 内容驱动 `analysis` / `final` 事件 |
+## Skill 约束
 
-外部 SSE 输出契约不变：`reasoning` → `step` → `analysis` / `final` → `[DONE]`。
-
-## 模型路由约定
-
-- `as_core.pick_model(vision=True)` → `ali-qwen3.7-plus`
-- `as_core.pick_model(vision=False)` → `ali-qwen3.7-max`
-
-环境变量覆盖：`VISION_LLM_MODEL`、`TEXT_LLM_MODEL`、`WENCHAIN_BASE_URL`、
-`WENCHAIN_API_KEY`（默认 `wangpantob_all_video_copy`）、`USE_WENCHAIN_OPENAI`、
-`ALLOW_MOCK_LLM`。
-
-## 接真实工具的替换点
-
-`src/agent/react_agents.py` 里的每个 FunctionTool 现在都是**薄封装**（3~5 行），
-真实/MOCK 业务全部落在 `src/tools/`：
-
-- 理解层：`src/tools/understanding.py` 的 `UnderstandingTool.schema_hint /
-  analyze_messages / build_template / profile_materials / _compat_breakdown`
-- 规划层：`src/tools/planning.py` 的 `PlanningTool.plan_payload / decide_payload`
-- 生成 / 剪辑 / 包装：`src/tools/generation.py`、`src/tools/editing.py`、
-  `src/tools/packaging.py` 中对应类的 `run(...)` 方法
-
-`react_agents` 顶部实例化了 `UNDERSTANDING / PLANNING / GENERATION / EDITING /
-PACKAGING` 五个共享实例，orchestrator 与 FunctionTool 都通过这些实例调用业务，
-接入真实能力时只替换 `src/tools/*.py` 的方法体，Toolkit 注册与 SSE 契约保持不变。
-
-- `parse_reference` / `assess_materials` → `src/tools/understanding.py`
-- `plan_execute` / `decide_shot` → `src/tools/planning.py`
-- `generate_shot` / `edit_timeline` / `package_video` →
-  `src/tools/generation.py` / `editing.py` / `packaging.py`
-
-## SKILL 系统
-
-保留原有 5 个 `skills_defs/*/SKILL.md`，`src/skills.py` 继续使用
-`agentscope.skill.LocalSkillLoader`（在没有活跃事件循环时）+ frontmatter 手动
-读取的 fallback，不做变更。
+各 Agent 的行为由 `skills_defs/*/SKILL.md` 约束（`src/shared/skills.py` 加载，
+frontmatter + prompt_hint）：
+- 理解：`viral_reference_understanding` / `user_material_understanding` / `ecom_understanding` / 场景 skill / `material_coarse_match` / `material_arbitration`
+- 编排：`orchestration_script` / `orchestration_shot_replicate`
+- 剪辑：`agent_edit_editor` / `agent_edit_reviewer` / `agent_edit_arbiter` / `aigc_generator`
+- 短剧：`drama_replication`（场景识别/路由；生成 prompt 直接写在 `drama/*.py` 里）

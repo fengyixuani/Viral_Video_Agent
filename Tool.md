@@ -1,162 +1,86 @@
-# Tool.md — 当前 Agent 可用的工具清单
+# Tool.md —— 各阶段 Agent 可用工具清单
 
-> 定义位置：`src/agent/react_agents.py`（**薄封装**）+ `src/tools/`（**业务实现**）
-> 注册方式：`FunctionTool(fn)` 自动从函数签名与 docstring 生成 schema
-> 调用方式：`Toolkit.call_tool(...)`，返回 `ToolResponse(content=[TextBlock])`
-> 分层原则：`react_agents.py` 的每个 FunctionTool 只做 3~5 行的薄封装——把入参交给
-> `src/tools/` 下对应的业务类方法（`UNDERSTANDING` / `PLANNING` / `GENERATION` /
-> `EDITING` / `PACKAGING` 共享实例），再用 `_text_response` 包装成 `ToolResponse`。
-> 真实/MOCK 业务只允许出现在 `src/tools/` 里，orchestrator 与 FunctionTool 都不得
-> 内嵌业务实现。
-
-## FunctionTool → 业务方法映射
-
-| FunctionTool（`react_agents.py`） | 对应业务方法（`src/tools/`） |
-| --- | --- |
-| `parse_reference` | `UnderstandingTool.schema_hint()`（附带 schema 提示，回显 payload） |
-| `assess_materials` | `UnderstandingTool.profile_materials(materials)` |
-| `plan_execute` | `PlanningTool.plan_payload(scheme_name, strategy, dimensions, trends, materials_count)` |
-| `decide_shot` | `PlanningTool.decide_payload(slot_id, want, strategy)` |
-| `generate_shot` | `GenerationTool.run(gen_prompt, duration, profile=None)` |
-| `edit_timeline` | `EditingTool.run(shots, profile=None)` |
-| `package_video` | `PackagingTool.run(shots, duration_sec, profile=None)` |
-
-Orchestrator 侧（`src/agent/orchestrator.py`）复用同一批共享实例：
-`self.understanding = react_agents.UNDERSTANDING` 等等，因此 `analyze_messages`、
-`build_template`、`profile_materials` 与 `generation.run` / `editing.run` /
-`packaging.run` 全部走业务层，避免任何业务副本。
+工具用 AgentScope `FunctionTool(fn)` 声明：schema 由函数签名 + docstring 自动生成。
+理解/编排的工具在 `src/shared/react_agents.py`（薄封装，业务落在 `src/tools/`）；
+剪辑/AIGC 的工具在 `src/editing/`。下面按阶段列出**当前真实注册的工具**。
 
 ---
 
-## 1. UnderstandingAgent — 视觉理解（模型 `ali-qwen3.7-plus`）
+## A · 理解阶段（`understanding/`；Toolkit=`build_understanding_toolkit`）
 
-Toolkit 构造：`build_understanding_toolkit()`
+`UNDERSTANDING_TOOLS = [parse_reference, assess_materials, transcribe_audio,
+detect_shot_boundaries, detect_music_beats]`。工具规划 Agent
+（`planner.run_understanding_planner`）按 `TOOL_CATALOG` 决定实际调用哪些。
 
-### 1.1 `parse_reference`
+- **parse_reference**(video_uri, video_desc, intent, materials, duration_sec) — 打包参考视频上下文供理解 LLM。
+- **assess_materials**(materials) — 粗盘点用户素材（数量/时长）。
+- **transcribe_audio**(media_path) — 语音识别转写（走独立 qwen3-asr 子进程环境）。
+- **detect_shot_boundaries**(video_path, threshold=…) — ffmpeg 场景切分，`metadata.boundaries` 注入理解 prompt 对齐镜头。
+- **detect_music_beats**(audio_path, …) — librosa 估计 BPM + beat 时间点，供卡点。
 
-- 用途：把参考视频 + 描述 + 意图 + 用户素材 + 探测时长打包，供理解 LLM 拆解
-- 参数
-  - `video_uri: str` — 参考视频 URI/本地路径
-  - `video_desc: str` — 视频描述（可选补充信息）
-  - `intent: str` — 用户复刻意图
-  - `materials: list` — 用户已提供的素材条目
-  - `duration_sec: float` — ffmpeg 探测出的真实时长
-- 返回：`ToolResponse` 内嵌回显 JSON
-- 替换点：接入真实拆镜 / VLM 打标 / ASR / OCR 时，在函数内组装结构化观察结果
-
-### 1.2 `assess_materials`
-
-- 用途：对用户素材做粗盘点，供 LLM 判断哪些镜头可 match、哪些需 generate
-- 参数：`materials: list`
-- 返回：`{provided_count, materials}`
-- 替换点：真实版应调用 shot_segment / vlm_tag / asr / ocr 生成 `MaterialProfile`
+真实理解业务在 `src/tools/understanding.py`（`UnderstandingTool`：schema_hint /
+analyze_messages / build_template / profile_materials）；探测工具在 `src/tools/media_probe.py`。
 
 ---
 
-## 2. PlanningAgent — 规划与执行（模型 `ali-qwen3.7-max`）
+## B · 编排阶段（`orchestration/`；Toolkit=`build_planning_toolkit`）
 
-Toolkit 构造：`build_planning_toolkit()`
+`PLANNING_TOOLS = [plan_execute, decide_shot, generate_shot, edit_timeline,
+package_video, detect_music_beats, retrieve_video_segments]`（生成/剪辑/包装为 MOCK 占位，
+真实成片走 B 的 Agent 剪辑链路）。
 
-### 2.1 `plan_execute`
-
-- 用途：把复刻方案、策略、勾选维度、趋势、素材数打包给规划 LLM，产出 plan-execute 计划
-- 参数
-  - `scheme_name: str`
-  - `strategy: str` — `faithful | balanced | regenerate`
-  - `dimensions: list` — 用户勾选的可复刻维度
-  - `trends: list` — 用户勾选的热门趋势短语
-  - `materials_count: int`
-- 返回：回显 JSON，LLM 据此产出 `{goal, granularity, reasoning, steps}`
-
-### 2.2 `decide_shot`
-
-- 用途：逐镜决策 `match` vs `generate`
-- 参数
-  - `slot_id: int`
-  - `want: str` — 该镜头目标
-  - `strategy: str`
-- 返回：回显 JSON，LLM 输出 `{decisions:[{slot_id, action, reason}]}`
-
-### 2.3 `generate_shot`（占位）
-
-- 用途：镜头生成
-- 参数
-  - `gen_prompt: str`
-  - `duration: float`
-- 返回：`{gen_prompt, duration, uri: "mock://generated"}`
-- 替换点：接入 Seedance / Wan 等 T2V 后返回真实 `video_url`、`duration`
-
-### 2.4 `edit_timeline`（占位）
-
-- 用途：把镜头列表组装成时间线
-- 参数：`shots: list`
-- 返回：`{shots, timeline: "mock://timeline"}`
-- 替换点：接入剪辑引擎后返回真实 timeline JSON（含卡点、转场、素材切片）
-
-### 2.5 `package_video`（占位）
-
-- 用途：包装成片（字幕 / TTS / BGM / 转场 / 导出）
-- 参数
-  - `shots: list`
-  - `duration: float`
-- 返回：`{shots, duration, uri: "mock://output/final.mp4"}`
-- 替换点：接入 TTS / 字幕烧录 / BGM 混音 / ffmpeg 导出后返回真实成片 URI
+- **plan_execute**(scheme_name, strategy, dimensions, trends, materials_count) — 产出 plan-execute 计划。
+- **decide_shot**(slot_id, want, strategy) — 逐镜 match/generate 决策。
+- **generate_shot / edit_timeline / package_video** — MOCK 占位（真实剪辑在 `editing/`）。
+- 业务在 `src/tools/planning.py`。编排结果由 `orchestration/scriptgen.py` 导出 strategy JSON。
 
 ---
 
-## 3. 结构化探测工具（UnderstandingAgent + PlanningAgent 共享）
+## B · 剪辑阶段 · 剪辑 Agent（`editing/tools.py`）
 
-来源：`src/tools/media_probe.py`，返回 AgentScope `ToolChunk`；人类可读摘要在 `content`，机器可读结果在 `metadata`。
+`EDIT_FUNCTION_TOOLS`（ReAct，剪辑 Agent 每次只输出一个动作）：
 
-### 3.1 `detect_shot_boundaries`
+- **retrieve**(slot_id, query, top_k=6) — 从全量用户素材池按语义召回候选片段。
+- **verify**(global_asset_id, question) — 对某片段按需 VLM 视觉核验。
+- **place**(slot_id, global_asset_id, source_time_range="", target_duration=0, caption="", …) — 把某片段放入某 slot。
+- **tts_clone**(slot_id, ref_global_asset_id, text) — 克隆音色为该镜配音（走 CosyVoice 子进程），台词需衔接上下文。
+- **finish**() — 所有 slot 放好后结束本轮。
 
-- 用途：用 ffmpeg 场景切分给出真实镜头切点
-- 参数：`video_path: str`、`threshold=0.18`、`fallback_threshold=0.08`、`ffmpeg_bin=""`
-- metadata：`{boundaries:[秒], boundary_count, threshold_used, fallback_used, ffmpeg_seconds}`
-- Orchestrator 会把 `boundaries` 注入理解 prompt，使 `shot_slots` 与实际镜头对齐
-
-### 3.2 `detect_music_beats`
-
-- 用途：用 librosa 估计 BPM + beat 时间点（可选 onset），支持视频直接抽轨
-- 参数：`audio_path: str`、`include_onsets=False`、`sample_rate=22050`、`hop_length=512`、`start_bpm=120.0`、`tightness=100.0`、`ffmpeg_bin=""`
-- metadata：`{tempo_bpm, beats:[秒], beat_count, duration_seconds, sample_rate, hop_length, librosa_seconds}`；`include_onsets=true` 时附加 `onsets/onset_count`
-- Orchestrator 会把 `tempo_bpm` 与 `beats_preview` 注入理解 prompt，帮助 LLM 卡点
+工具箱 `EditToolbox`（retrieve/verify）在 `editing/tools.py`；执行分发在
+`editing/loop.py::_run_edit_agent`。审片 Agent（`gemini_review.py` / qwen）与仲裁
+Agent（`arbiter.py`）不是 FunctionTool，而是 loop 内的评审/裁决步骤。
 
 ---
 
-## 4. 工具在两阶段中的调用顺序
+## B · 剪辑阶段 · AIGC 补镜 Agent（`editing/aigc.py`）
 
-阶段一（analyze_stream，UnderstandingAgent）
+`AIGC_FUNCTION_TOOLS`（缺失镜头 seedream+seedance 生成，ReAct，≤5 子 Agent 并行）：
 
-1. `parse_reference(video_uri, video_desc, intent, materials, duration_sec)`
-2. `detect_shot_boundaries(video_path)`（本地视频时）
-3. `detect_music_beats(audio_path)`（本地视频时）
-4. `assess_materials(materials)`
-5. LLM 输出结构化 JSON（`shot_slots` / `schemes` / `industry_guess` 等）
+- **recall_product**(query, top_k=6) — 从用户素材池召回最能代表该商品的片段。
+- **pick_product_frame**(global_asset_id, timestamp=-1) — 抽一帧作产品参考帧（i2i 用）。
+- **gen_first_frame**(prompt, use_product_ref=False) — seedream 生成首帧（i2i 保真商品或 t2i）。
+- **gen_storyboard**(motion_prompt) — 基于首帧生成脚本图指引运动（可选）。
+- **gen_video**(prompt, duration_sec=5) — seedance 由首帧生视频并下载到本地。
+- **review_and_extract**(start, dur, caption="") — VLM 回看生成视频并截取一段作最终片段。
+- **finish**() — 该镜补齐后结束。
 
-阶段二（replicate_stream，PlanningAgent）
-
-1. `plan_execute(scheme_name, strategy, dimensions, trends, materials_count)`
-2. 对每个 shot_slot 调 `decide_shot(slot_id, want, strategy)`
-3. 对 `action=generate` 的镜头调 `generate_shot(gen_prompt, duration)`
-4. `edit_timeline(shots)`
-5. `package_video(shots, duration)`
-
-每次工具调用都会生成两条 SSE `step`：`ToolCallStart` 与 `ToolResultEnd`（详见 `Agent.md`）。
+底层生成客户端 `src/tools/aigc_gen.py`（seedream `doubao-seedream-5-0` / seedance
+`doubao-seedance-2-0`，走 wenchain `/incommonuserr`，i2i 支持 base64 参考图、免 BOS）。
 
 ---
 
-## 4. 新增工具的方法
+## C · AI 短剧（`drama/`，非 FunctionTool）
 
-1. 在 `src/agent/react_agents.py` 里写一个纯函数，签名 + docstring 清晰（AgentScope 用它推断 schema）
-2. 返回 `ToolResponse(content=[TextBlock(type="text", text=...)])`
-3. 加入 `UNDERSTANDING_TOOLS` 或 `PLANNING_TOOLS`
-4. 在 orchestrator 里通过 `toolkit.call_tool(tool_name, kwargs)` 调用；结果会自动出现在对应 SSE `step` 事件的 `observation` 字段
-5. 无需修改前端契约
+短剧是确定性阶段编排，不走 ReAct 工具。媒体生成用 `src/tools/wenchain_media.py`
+（seedream/seedance + ffmpeg 拼接），阶段实现在 `drama/{understand,script,storyboard,
+video,verify}.py`。
 
 ---
 
-## 5. 未接入但预留的能力
+## 新增工具的方法
 
-- Operator 级：`shot_segment` / `vlm_tag` / `asr` / `ocr` / `emotion` / `scene_event`（`src/operators.py` 目前是 MOCK 类）
-- Trend：`src/trends.py` 已经通过 `as_core.complete_json` 独立调用 LLM，与工具解耦，未来可再包一层 `fetch_trends_tool` 注册到 PlanningAgent
+- 理解/编排工具：在 `src/shared/react_agents.py` 写纯函数（签名+docstring 清晰），
+  返回 `ToolResponse`，加入 `UNDERSTANDING_TOOLS` / `PLANNING_TOOLS`；业务落在 `src/tools/`。
+- 剪辑/AIGC 工具：在 `src/editing/tools.py`（或 `aigc.py`）写函数加入 `EDIT_FUNCTION_TOOLS`
+  / `AIGC_FUNCTION_TOOLS`，并在对应 ReAct 分发器里实现执行；schema 会自动渲染进 Agent prompt。
+- 无需改前端 SSE 契约。

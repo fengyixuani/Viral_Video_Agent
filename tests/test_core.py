@@ -5,12 +5,14 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
-if SRC not in sys.path:
-    sys.path.insert(0, SRC)
+for _p in (os.path.join(SRC, "shared"), SRC):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import as_core
 import skills
-from agent import ReplicationAgent
+from understanding import UnderstandingAgent
+from orchestration import OrchestrationAgent
 from inputs import load
 from trends import fetch_trends
 
@@ -49,17 +51,18 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(all(item["keyword"] for item in result))
 
     def test_analyze_and_replicate_streams(self):
-        agent = ReplicationAgent()
+        understanding_agent = UnderstandingAgent()
+        orchestration_agent = OrchestrationAgent()
 
         async def collect(gen):
             return [item async for item in gen]
 
-        analyze = asyncio.run(collect(agent.analyze_stream(load({"skill_id": "drama"}))))
+        analyze = asyncio.run(collect(understanding_agent.analyze_stream(load({"skill_id": "drama"}))))
         result = next(item["result"] for item in analyze if item["type"] == "analysis")
         self.assertEqual(result["industry_guess"], "drama")
         self.assertGreaterEqual(len(result["schemes"]), 2)
         self.assertTrue(result["template"]["shot_slots"][0]["breakdown"])
-        replicate = asyncio.run(collect(agent.replicate_stream(load({
+        replicate = asyncio.run(collect(orchestration_agent.replicate_stream(load({
             "industry_id": "drama", "template": result["template"],
             "selected_dimensions": ["fine-hook"], "material_strategy": "balanced",
         }))))
