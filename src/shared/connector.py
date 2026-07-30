@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 
 import obs
@@ -399,6 +400,84 @@ def _target_product_name(strategy: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# whq 结构级复刻的出片：直接用 whq 自己的出片链路，不走 Split 主链路
+# --------------------------------------------------------------------------- #
+def _run_whq_edit(strategy_abs: str, strategy: dict, *, enable_bgm: bool, bgm_path: str,
+                  rid: str, step):
+    """「workflow 剪辑」在 whq_clone 编排产物上的出片实现（生成器，事件与 Split 分支一致）。
+
+    Split 主链路的 ``rebuild_asr_edit`` 会把每镜窗口扩到 ASR 整句边界、并按扩窗长度
+    retime 整条时间线，顶开 whq 锁好的槽时长（实测参考 28s 被撑到 65s），扩窗还会把别的
+    段的口播吞进来（听起来同一句话说两遍）。whq 编排阶段已经做完选片/对窗/原声决策/文案，
+    所以这里直接调 whq 的 render（硬剪 → 配音 → 字幕 → 语速贴参考），产物时长 = 参考时长。
+    """
+    whq_dir = os.path.join(AGENT_ROOT, "src", "editing", "whq_clone")
+    if whq_dir not in sys.path:
+        sys.path.insert(0, whq_dir)
+    import runner as whq_runner  # noqa: PLC0415
+
+    meta = strategy.get("metadata") or {}
+    product_name = str(meta.get("product_name") or "").strip() or _target_product_name(strategy)
+    ref_dur = ((strategy.get("whq_meta") or {}).get("duration_estimate")) or 0
+    yield step("whq", "whq 出片", "复用 whq 编排（硬剪 + 原声/克隆配音 + 字幕 + 语速贴参考），"
+                                 "不走 Split 重建（它会把槽时长顶开、口播重复）", state="running")
+
+    final_dir = os.path.join(AGENT_ROOT, "uploads", "final")
+    os.makedirs(final_dir, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    slug = _slug((meta.get("project_name") or "whq_clone"))
+    final_name = f"{slug}_{ts}_final.mp4"
+    final_abs = os.path.join(final_dir, final_name)
+
+    resolved_bgm = bgm_path or _load_split_env().get("BGM_PATH", "") or DEFAULT_BGM
+    migrate_bgm = bool(enable_bgm and resolved_bgm and os.path.isfile(resolved_bgm))
+    try:
+        info = whq_runner.edit_from_strategy(
+            strategy_abs, final_abs, product_name=product_name, migrate_bgm=migrate_bgm)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[%s] whq edit failed: %s", rid, exc)
+        yield {"type": "error", "message": f"whq 出片失败：{exc!s}"}
+        return
+    final_out = info.get("final") or ""
+    if final_out and os.path.abspath(final_out) != final_abs and os.path.isfile(final_out):
+        try:
+            shutil.copy2(final_out, final_abs)
+        except OSError:
+            final_abs = final_out
+    if not os.path.isfile(final_abs):
+        yield {"type": "error", "message": "whq 出片结束但未找到成片文件。"}
+        return
+
+    final_script = []
+    try:
+        with open(info["plan_path"], "r", encoding="utf-8") as stream:
+            plan = json.load(stream)
+        decisions = plan.get("decisions") or {}
+        for seg in plan.get("segments") or []:
+            sid = seg.get("slot_id", "")
+            dec = decisions.get(sid) or {}
+            cand = seg.get("best_candidate") or {}
+            final_script.append({
+                "slot_id": sid,
+                "target_time_range": "",
+                "source": os.path.basename(str(cand.get("source_path") or "")),
+                "source_time_range": "{}-{}".format(cand.get("start"), cand.get("end")),
+                "caption_text": dec.get("window_text", "") or seg.get("beat_desc", ""),
+                "caption_source": "user_original" if dec.get("voice_source") == "original" else "whq_script",
+                "source_asr_text": dec.get("window_text", ""),
+            })
+    except (OSError, KeyError, json.JSONDecodeError, ValueError):
+        pass
+
+    yield step("whq", "whq 出片", "成片已生成", state="done",
+               observation=(f"{info.get('n_segments')} 段，其中 {info.get('n_original_voice')} 段保留用户原声\n"
+                            f"参考总时长 {ref_dur}s（成片按槽时长锁定，不做整体加速缩短）\n{final_abs}"))
+    yield {"type": "edit_done", "video_uri": f"uploads/final/{final_name}",
+           "final_path": final_abs, "slots": info.get("n_segments", 0), "asr_hits": 0,
+           "product_name": product_name, "final_script": final_script}
+
+
+# --------------------------------------------------------------------------- #
 # 主流程：合成四份文件 → 子进程跑 Split 后链路 → 流式回传
 # --------------------------------------------------------------------------- #
 def run_edit(strategy_path: str, *, enable_tts: bool = True, enable_bgm: bool = True,
@@ -421,6 +500,12 @@ def run_edit(strategy_path: str, *, enable_tts: bool = True, enable_bgm: bool = 
     yield step("prep", "读取编排脚本", "解析 selected_editing_strategy，抽取可剪辑镜头", state="running")
     with open(strategy_abs, "r", encoding="utf-8") as stream:
         strategy = json.load(stream)
+    # whq 结构级复刻的编排产物 -> 用 whq 自己的出片链路（Split 重建会顶开槽时长 + 口播重复）
+    if (strategy.get("metadata") or {}).get("reproduce_mode") == "whq_clone" \
+            and os.getenv("WHQ_EDIT_VIA_SPLIT", "0") in ("0", "false", "False"):
+        yield from _run_whq_edit(strategy_abs, strategy, enable_bgm=enable_bgm,
+                                 bgm_path=bgm_path, rid=rid, step=step)
+        return
     kept = _kept_timeline(strategy)
     if not kept:
         yield {"type": "error",

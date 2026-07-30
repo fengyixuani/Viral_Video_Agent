@@ -124,6 +124,12 @@ class OrchestrationAgent(ReplicationAgentBase):
                    "title": "重建素材理解完成",
                    "thought": (f"素材池就绪（{len(material_understanding)} 项）"
                                if material_understanding else "缓存中无素材理解结果，素材池为空")}
+        # whq 结构级复刻：确定性一步出成片（硬剪+配音+字幕+语速贴参考）。不走下面的
+        # structure/shot 编排与 MOCK 出片，直接调 editing/whq_clone.runner 并 return。
+        if mode == "whq_clone":
+            async for event in self._run_whq_clone(rid, bundle, template, material_understanding):
+                yield event
+            return
         effective_feasibility = {}
         structure_template = None
         reference_dict = to_jsonable(template)
@@ -277,6 +283,142 @@ class OrchestrationAgent(ReplicationAgentBase):
                 "strategy": script_export.get("strategy", {}),
                 "edit_plan": script_export.get("plan", {}),
             } if script_export else {},
+        }}
+
+    async def _run_whq_clone(self, rid, bundle, template, material_understanding):
+        """reproduce_mode=='whq_clone' 分支：调 editing/whq_clone.runner。
+
+        默认 **Agent 形态**（WHQ_AGENT_EDIT != 0）：这里只做编排，产出
+        selected_editing_strategy.json + connector_context.json，出片交给
+        editing/loop.py 的「剪辑 Agent 出片 → 审片 Agent 看片 → 不满意自动重剪」循环
+        （前端 Agent 剪辑面板 / POST /api/agent_edit）。第 1 轮用 whq 的确定性分配作基线。
+
+        WHQ_AGENT_EDIT=0 时回到 legacy 的 workflow 形态：whq 一步直接出成片。
+        whq 全链路是同步重任务（ffmpeg/ASR/TTS），用 asyncio.to_thread 丢线程池跑，
+        避免阻塞 SSE 事件循环。
+        """
+        import os
+        import sys
+
+        whq_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "editing", "whq_clone")
+        if whq_dir not in sys.path:
+            sys.path.insert(0, whq_dir)
+        key = f"whq-{rid}"
+        try:
+            import runner as whq_runner
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("[%s] whq_clone import failed: %s", rid, exc)
+            yield {"type": "step", "phase": "复刻", "key": key, "state": "done",
+                   "title": "whq 结构级复刻不可用", "thought": f"模块导入失败：{exc!s}"}
+            yield {"type": "final", "result": {}}
+            return
+
+        # 参考视频路径解析：video_uri 绝对存在则用之，否则相对项目根。
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        ref_uri = bundle.video_uri or ""
+        ref_video = ref_uri if os.path.isfile(ref_uri) else os.path.join(project_root, ref_uri)
+        if not os.path.isfile(ref_video):
+            ref_video = ref_uri  # 交给 runner 兜底（无参考视频→template 近似 key_beats）
+
+        mu = material_understanding or (
+            (bundle.template or {}).get("material_understanding") if isinstance(bundle.template, dict) else {})
+        out_dir = os.path.join(project_root, "outputs", "whq_clone", rid)
+        out_path = os.path.join(out_dir, "whq_clone.mp4")
+        tpl = bundle.template if isinstance(bundle.template, dict) else {}
+        agent_edit = os.getenv("WHQ_AGENT_EDIT", "1") not in ("0", "false", "False")
+        if tpl.get("whq_agent_edit") is not None:
+            agent_edit = bool(tpl.get("whq_agent_edit"))
+
+        common = dict(
+            product_name=bundle.intent or "",
+            # 优先吃真实 understanding 产物（A 可在 template 里回填这些路径 / slug）
+            dna_md=tpl.get("dna_md") or tpl.get("dna_path"),
+            assets_json=tpl.get("assets_json") or tpl.get("assets_path"),
+            asr_json=tpl.get("asr_json") or tpl.get("source_asr_path"),
+            slug=tpl.get("slug"),
+            # 无现成产物时，跑 Split 深度理解生成 Split 级 DNA+素材理解（全模型，达手工版质量）
+            deep_understanding=bool(tpl.get("deep_understanding", True)),
+        )
+        arg = {"material_understanding": mu, "template": to_jsonable(template)}
+
+        if agent_edit:
+            yield {"type": "step", "phase": "复刻", "key": key, "state": "running",
+                   "title": "whq 结构级复刻（编排）",
+                   "thought": "重建参考 key_beats → 1:1 分配 → 原声/克隆决策 + 句子级对窗 → 产出剪辑方案，交 Agent 剪辑出片"}
+        else:
+            yield {"type": "step", "phase": "复刻", "key": key, "state": "running",
+                   "title": "whq 结构级复刻", "thought": "重建参考 key_beats → 1:1 分配 → 硬剪 → 配音 → 字幕 → 语速贴参考（可能耗时数分钟）"}
+        try:
+            fn = whq_runner.plan_whq_clone if agent_edit else whq_runner.run_whq_clone
+            info = await asyncio.to_thread(fn, arg, out_path, ref_video, **common)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("[%s] whq_clone run failed: %s", rid, exc)
+            yield {"type": "step", "phase": "复刻", "key": key, "state": "done",
+                   "title": "whq 结构级复刻失败", "thought": f"{exc!s}"}
+            yield {"type": "final", "result": {}}
+            return
+
+        probs = info.get("strategy_problems") or []
+        if agent_edit:
+            warns = info.get("warnings") or []
+            if warns:
+                _log.warning("[%s] whq_clone plan warnings: %s", rid, "; ".join(warns))
+                yield {"type": "step", "phase": "复刻", "key": f"{key}-warn", "state": "done",
+                       "title": "whq 编排告警（会明显影响成片）",
+                       "thought": warns[0],
+                       "observation": "\n".join("- " + w for w in warns)}
+            _log.info("[%s] whq_clone plan done strategy=%s segs=%s original=%s pool=%s gap=%s contract=%s",
+                      rid, info.get("strategy_path"), info.get("n_segments"),
+                      info.get("n_original_voice"), info.get("n_pool"), info.get("n_gap"),
+                      "OK" if not probs else contracts.summarize(probs))
+            yield {"type": "step", "phase": "复刻", "key": key, "state": "done",
+                   "title": "whq 剪辑方案已生成",
+                   "thought": (f"{info.get('n_segments')} 个结构段落，其中 {info.get('n_original_voice')} 段保留用户原声；"
+                               f"素材池 {info.get('n_pool')} 段可供 Agent 重新召回"),
+                   "observation": (f"strategy: {info.get('strategy_path')}\n"
+                                   f"缺口镜头: {info.get('n_gap')}；key_beats 重建: {info.get('dna_reconstructed')}\n"
+                                   "下一步：点「Agent 剪辑」出片（剪辑→审片→自动重剪）")}
+            yield {"type": "final", "result": {
+                "template": to_jsonable(template),
+                "whq_process": info.get("process") or {},
+                "report": {"reproduce_mode": "whq_clone", "n_gap": info.get("n_gap"),
+                           "n_original_voice": info.get("n_original_voice"),
+                           "dna_reconstructed": info.get("dna_reconstructed")},
+                "trace": [],
+                "script": {
+                    "strategy_path": info.get("strategy_path", ""),
+                    "edit_plan_path": info.get("plan_path", ""),
+                },
+            }}
+            return
+
+        # 成片在 project_root/outputs/ 下 -> 转成可被 /outputs/ 服务的相对 uri 供前端播放
+        final_abs = info.get("final", "")
+        try:
+            _rel = os.path.relpath(os.path.realpath(final_abs), os.path.realpath(project_root))
+            video_uri = _rel.replace(os.sep, "/") if not _rel.startswith("..") else final_abs
+        except Exception:  # noqa: BLE001
+            video_uri = final_abs
+        _log.info("[%s] whq_clone done final=%s strategy=%s gap=%s reconstructed=%s contract=%s",
+                  rid, info.get("final"), info.get("strategy_path"), info.get("n_gap"),
+                  info.get("dna_reconstructed"), "OK" if not probs else contracts.summarize(probs))
+        yield {"type": "step", "phase": "复刻", "key": key, "state": "done",
+               "title": "whq 结构级复刻完成",
+               "thought": f"成片：{info.get('final')}",
+               "observation": (f"strategy: {info.get('strategy_path')}\n"
+                               f"缺口镜头: {info.get('n_gap')}；key_beats 重建: {info.get('dna_reconstructed')}")}
+        yield {"type": "final", "result": {
+            "template": to_jsonable(template),
+            "video": {"uri": video_uri},
+            "whq_process": info.get("process") or {},
+            "report": {"reproduce_mode": "whq_clone", "n_gap": info.get("n_gap"),
+                       "dna_reconstructed": info.get("dna_reconstructed")},
+            "trace": [],
+            "script": {
+                "strategy_path": info.get("strategy_path", ""),
+                "edit_plan_path": info.get("plan_path", ""),
+            },
         }}
 
     @staticmethod

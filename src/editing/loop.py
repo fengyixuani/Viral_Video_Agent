@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 
 import as_core
@@ -152,6 +153,8 @@ def _load_inputs(strategy: dict, context: dict) -> dict:
             "want": meta.get("want", "") or item.get("caption_text", ""),
             "breakdown": meta.get("breakdown", []) or [],
             "target_duration": target_dur,
+            # whq_clone 链路：编排阶段定好的原声/克隆基线 + 参考语速（其他链路为空）
+            "whq_voice": meta.get("whq_voice") or item.get("whq_voice") or {},
         })
         # 复刻方案预填：source 来自 editing_timeline，口播来自 user_asset_bank
         asset = bank_by_slot.get(sid) or {}
@@ -160,11 +163,14 @@ def _load_inputs(strategy: dict, context: dict) -> dict:
         if sp and _abspath(sp) and os.path.isfile(_abspath(sp)):
             speech = asset.get("speech_or_text", "")
             presets[sid] = {
-                "global_asset_id": asset.get("asset_id", "") or item.get("global_asset_id", ""),
+                "global_asset_id": (asset.get("asset_id", "") or item.get("global_asset_id", "")),
                 "source_path": sp, "source_time_range": srng,
                 "target_duration": target_dur,
                 "caption": speech, "speech": speech,
                 "burn_caption": bool(speech), "speed": 1.0,
+                # 原声段：source_time_range 是 whq「说完整句」的对窗结果，成片必须播完整个
+                # 窗口，不能被节拍目标时长截短（否则最后一句话说一半就切）
+                "voice_source": (item.get("whq_voice") or {}).get("voice_source"),
             }
     meta = strategy.get("metadata", {}) or {}
     # 缺失镜头（需 AIGC 生成）：从 missing_assets 收集，补上 breakdown（爆款分镜维度）与字幕
@@ -187,7 +193,8 @@ def _load_inputs(strategy: dict, context: dict) -> dict:
             "target_duration": target_dur,
         })
     return {
-        "product_name": meta.get("scheme", "") or meta.get("project_name", "") or "目标商品",
+        "product_name": (meta.get("product_name", "") or meta.get("scheme", "")
+                         or meta.get("project_name", "") or "目标商品"),
         "narrative_structure": strategy.get("overall_editing_strategy", {}) if isinstance(strategy.get("overall_editing_strategy"), dict) else {},
         "slots": slots,
         "presets": presets,
@@ -259,6 +266,85 @@ async def _run_llm(system: str, user: str, *, media=None, vision=False, tag: str
     return as_core.parse_json(content) if content.strip() else {}
 
 
+def _extend_range_for_audio(source_path, rng, need_dur):
+    """把 [s,e] 往后延到至少 need_dur 秒（不超过源片总长）。延不动就原样返回。"""
+    s, e = _parse_range(rng)
+    if e <= s or need_dur <= (e - s) + 0.05:
+        return rng
+    total = _video_duration(_abspath(source_path))
+    if total <= 0:
+        return rng
+    new_e = min(total, s + need_dur)
+    if new_e - s <= (e - s) + 0.05:
+        return rng
+    return f"{s:.2f}-{new_e:.2f}"
+
+
+def _video_duration(path):
+    """源片时长（秒）；取不到返回 0。用 ffmpeg 读，本机无 ffprobe。"""
+    if not path or not os.path.isfile(path):
+        return 0.0
+    try:
+        import subprocess
+        out = subprocess.run([editor._FFMPEG, "-hide_banner", "-i", path],
+                             capture_output=True, text=True, timeout=20).stderr
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", out or "")
+        if m:
+            return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("读取源片时长失败 %s: %s", path, str(exc)[:120])
+    return 0.0
+
+
+_PUNCT_RE = re.compile(r"[^\w\u4e00-\u9fff]+")
+_NUM_TOKEN_RE = re.compile(
+    r"百分之[零一二三四五六七八九十百千点两0-9]+"
+    r"|[0-9]+(?:\.[0-9]+)?%?"
+    r"|[一二三四五六七八九十百千两]{1,6}(?:点[一二三四五六七八九十]+)?"
+    r"(?:块|元|折|盒|袋|包|条|斤|克|毫升|升|倍|周|天|年|个月|小时)"
+)
+
+
+def _norm_text(s):
+    return _PUNCT_RE.sub("", str(s or ""))
+
+
+def _copy_violations(text, user_corpus, ref_corpus, n=4):
+    """文案里「抄了参考爆款、但用户素材里没有」的片段 + 无出处的数字断言。
+
+    机制化拦截 whq 的老坑：DNA 的节拍描述来自另一条爆款，模型很容易把参考商品的
+    成分/含量/价格/喝法（如"抹茶奶绿""51.7%膳食纤维""29.9 元"）写进本商品的文案。
+    光靠 prompt 约束不住，这里按 n-gram + 数字 token 做客观核验。
+    """
+    t = _norm_text(text)
+    bad = []
+    for tok in _NUM_TOKEN_RE.findall(t):
+        if tok not in user_corpus:
+            bad.append(tok)
+    if ref_corpus:
+        for i in range(0, max(0, len(t) - n + 1)):
+            gram = t[i:i + n]
+            if gram in ref_corpus and gram not in user_corpus and gram not in bad:
+                bad.append(gram)
+    return bad[:6]
+
+
+def _fact_corpora(context, toolbox):
+    """(user_corpus, ref_corpus)：用户素材语料 / 参考爆款语料，供 _copy_violations 核验。
+
+    user = 素材池的画面描述 + 各片段自带原声（本商品真实存在的东西）
+    ref  = DNA 各节拍描述（参考爆款那个商品的说法）
+    """
+    user_parts, ref_parts = [], []
+    for seg in (getattr(toolbox, "by_gid", {}) or {}).values():
+        user_parts.append(seg.get("visual_description") or seg.get("one_sentence_summary") or "")
+        user_parts.append((seg.get("whq_speech") or {}).get("text") or seg.get("speech_or_text") or "")
+    for sh in (context.get("shots") or []):
+        ref_parts.append(sh.get("want") or "")
+        ref_parts.append(sh.get("narrative") or "")
+    return _norm_text("".join(user_parts)), _norm_text("".join(ref_parts))
+
+
 def _placements_to_clips(placements: dict, slots: list, tts_by_slot: dict = None,
                          burn_captions: bool = True) -> list:
     """把每个 slot 的最终 placement 按 slot 顺序转成 editor 需要的 clips。
@@ -276,11 +362,16 @@ def _placements_to_clips(placements: dict, slots: list, tts_by_slot: dict = None
         if tts and tts.get("audio_path"):
             # 克隆配音：字幕=改写文案，音轨=TTS wav，时长以配音为准
             cap = (tts.get("text") or "").strip() if burn_captions else ""
+            dur = float(tts.get("duration") or p.get("target_duration") or s.get("target_duration") or 3.0)
             clips.append({
                 "slot_id": s["slot_id"],
                 "source_path": p["source_path"],
-                "source_time_range": p.get("source_time_range", ""),
-                "target_duration": float(tts.get("duration") or p.get("target_duration") or s.get("target_duration") or 3.0),
+                "global_asset_id": p.get("global_asset_id", ""),
+                # 配音比所选片段长时，先从**源片里往后多截**补足画面；源片不够长才让
+                # editor 冻结末帧。否则会出现"画面静止好几秒、只有配音在响"。
+                "source_time_range": _extend_range_for_audio(p["source_path"],
+                                                             p.get("source_time_range", ""), dur),
+                "target_duration": dur,
                 "caption_text": cap,
                 "burn_caption": bool(cap),
                 "tts_audio_path": tts["audio_path"],
@@ -289,16 +380,130 @@ def _placements_to_clips(placements: dict, slots: list, tts_by_slot: dict = None
             continue
         caption = (p.get("caption") or "").strip() or (p.get("speech") or "").strip()
         burn = burn_captions and (p.get("burn_caption", True) is not False)
+        dur = float(p.get("target_duration") or s.get("target_duration") or 3.0)
+        # 保留原声的镜头：source_time_range 是「说完整句」的对窗窗口，必须整段播完。
+        # 否则 editor 会按节拍目标时长 min(seg_len, target) 截短，最后一句说一半就切（结尾截断）。
+        if p.get("voice_source") == "original" or (s.get("whq_voice") or {}).get("voice_source") == "original":
+            a, b = _parse_range(p.get("source_time_range", ""))
+            if b > a:
+                dur = max(dur, round(b - a, 3))
         clips.append({
             "slot_id": s["slot_id"],
             "source_path": p["source_path"],
+            "global_asset_id": p.get("global_asset_id", ""),
             "source_time_range": p.get("source_time_range", ""),
-            "target_duration": float(p.get("target_duration") or s.get("target_duration") or 3.0),
+            "target_duration": dur,
             "caption_text": caption if burn else "",
             "burn_caption": burn,
             "speed": float(p.get("speed") or 1.0),
         })
     return clips
+
+
+def _in_window_speech(toolbox, placement):
+    """该镜窗口内**实际会听到**的原声文本（中心落窗的逐字 ASR 拼起来）。"""
+    seg = (getattr(toolbox, "by_gid", {}) or {}).get((placement or {}).get("global_asset_id")) or {}
+    s, e = _parse_range((placement or {}).get("source_time_range", ""))
+    if e <= s:
+        return ""
+    out = ""
+    for it in ((seg.get("whq_speech") or {}).get("asr_items") or []):
+        try:
+            mid = (float(it.get("start")) + float(it.get("end"))) / 2.0
+        except (TypeError, ValueError):
+            continue
+        if s <= mid <= e:
+            out += str(it.get("text") or "")
+    return _norm_text(out)
+
+
+def _mute_slots(placements, slots, tts_by_slot, toolbox):
+    """既没有原声、也没有克隆配音的「哑巴段」slot_id 列表。
+
+    带货成片不该出现整段没人声的空档。Agent 偶尔会漏配，这里客观检测后触发补配音。
+    """
+    out = []
+    for s in slots or []:
+        sid = s["slot_id"]
+        p = (placements or {}).get(sid)
+        if not p:
+            continue                              # 已被 skip_slot 跳过
+        if sid in (tts_by_slot or {}):
+            continue                              # 有克隆配音
+        if p.get("voice_source") == "original":
+            continue                              # 保留了原声
+        if len(_in_window_speech(toolbox, p)) >= 3:
+            continue                              # 窗口内本来就有人在说话（原声可听）
+        out.append(sid)
+    return out
+
+
+def _snap_clips_to_sentences(clips, toolbox, gap=0.35, extend=3.0):
+    """保原声的镜头：结束点必须落在自然停顿上，别"话说一半就切"。
+
+    优先**往后延到那句说完**（最多 extend 秒，且不超过源片长度）——素材切片边界经常把
+    一句话切两半，往前回收会丢内容；延不到句尾时才退而回收到窗口内最后一个停顿。
+    克隆配音镜不动（音轨是 TTS，与素材说话无关）。
+    """
+    by_gid = getattr(toolbox, "by_gid", {}) or {}
+    # 同一源片的逐字 ASR 合并：单个候选下发的 items 只带自身窗口附近的上下文，合起来才是
+    # 整条源片的字轨，才能判断"这句到哪里才算说完"。
+    by_path = {}
+    for seg in by_gid.values():
+        items = (seg.get("whq_speech") or {}).get("asr_items") or []
+        if not items:
+            continue
+        bucket = by_path.setdefault(seg.get("source_path", ""), {})
+        for it in items:
+            try:
+                bucket[(round(float(it["start"]), 3), round(float(it["end"]), 3))] = str(it.get("text") or "")
+            except (TypeError, ValueError, KeyError):
+                continue
+    for c in clips or []:
+        if c.get("tts_audio_path"):
+            continue
+        s, e = _parse_range(c.get("source_time_range", ""))
+        if e <= s:
+            continue
+        toks = sorted((a, b, t) for (a, b), t in (by_path.get(c.get("source_path", "")) or {}).items())
+        if not toks:
+            continue
+        # 判定"话被切一半"：结束点落在某个字中间，或紧接结束点之后 gap 内还有字开口
+        cut_mid = any(a < e < b for a, b, _ in toks)
+        cont = any(e - 0.05 < a < e + gap for a, b, _ in toks)
+        if not (cut_mid or cont):
+            continue
+        # ① 往后延到该句说完：沿着字间隔 < gap 的连续串一直走到停顿处
+        limit = e + extend
+        total = _video_duration(_abspath(c.get("source_path", "")))
+        if total > 0:
+            limit = min(limit, total)
+        new_e, prev_end = e, None
+        for a, b, _t in toks:
+            if b <= e:
+                prev_end = b
+                continue
+            if a > new_e + gap or b > limit:
+                break
+            new_e, prev_end = b, b
+        if new_e > e + 0.05:
+            new_e = round(min(new_e + 0.12, limit), 3)
+            c["source_time_range"] = f"{s:.2f}-{new_e:.2f}"
+            c["target_duration"] = max(float(c.get("target_duration") or 0.0), new_e - s)
+            continue
+        # ② 延不动（源片到头了）→ 回收到窗口内最后一个自然停顿，至少留 0.6s 画面
+        inside = [(a, b) for a, b, _ in toks if s <= (a + b) / 2.0 <= e]
+        cut = None
+        for i in range(len(inside) - 1, 0, -1):
+            if inside[i][0] - inside[i - 1][1] >= gap:
+                cut = inside[i - 1][1] + 0.12
+                break
+        if cut is None or cut - s < 0.6:
+            continue
+        new_e = min(e, round(cut, 3))
+        if new_e < e - 0.05:
+            c["source_time_range"] = f"{s:.2f}-{new_e:.2f}"
+            c["target_duration"] = min(float(c.get("target_duration") or 0.0) or (new_e - s), new_e - s)
 
 
 def _snap_clips_to_beats(clips: list, beats: list) -> list:
@@ -384,6 +589,94 @@ async def _handle_tts_clone(ctx: dict, action: dict) -> dict:
         return {"ok": False, "error": f"参考片段无效：{ref_gid}"}
     if not text:
         return {"ok": False, "error": "缺少要配音的文案 text"}
+    # 该 slot 必须先有画面：配音是配给某个已选好的镜头的（工具说明里也写了先 place）。
+    # 否则 Agent 会陷入 retrieve→tts_clone→retrieve 的空转（配了音但画面一直没定）。
+    if slot_id not in (ctx.get("placements") or {}):
+        return {"ok": False, "error": f"{slot_id} 还没有画面：请先用 place/place_original 为它选好片段，再 tts_clone 配音"}
+    # 口型一致性硬约束：该镜画面里的人本来就在说话，就必须保留他的原声。换成克隆配音
+    # 会让口型和听到的话对不上（用户明确要求：有人脸且开口说话 -> 保原声，没说话才克隆）。
+    # 注意只统计**落在该镜窗口内**的字：素材池下发的 asr_items 为了对窗带了窗口外 ±1.5s 的
+    # 上下文，若把它们算进来，"有人脸但没说话"的镜头会被邻镜的说话声误判成在说话，
+    # 于是该配音的段也被拦下 -> 成片整段没配音。
+    _p = (ctx.get("placements") or {}).get(slot_id) or {}
+    _seg = (getattr(toolbox, "by_gid", {}) or {}).get(_p.get("global_asset_id")) or {}
+    _ws = _seg.get("whq_speech") or {}
+    _ws_start, _ws_end = _parse_range(_p.get("source_time_range", ""))
+    _items = _ws.get("asr_items") or []
+    _spoken = ""
+    if _items and _ws_end > _ws_start:
+        for _it in _items:
+            try:
+                _mid = (float(_it.get("start")) + float(_it.get("end"))) / 2.0
+            except (TypeError, ValueError):
+                continue
+            if _ws_start <= _mid <= _ws_end:
+                _spoken += str(_it.get("text") or "")
+    elif not _items:
+        # 老编排产物没给逐字 ASR（只有整段原声文本）：宁可保原声也不要口型错位，
+        # 用整段原声文本判定"这段有人在说话"。
+        _spoken = _ws.get("text") or ""
+    if _p.get("voice_source") != "original" and len(_norm_text(_spoken)) >= 3:
+        return {"ok": False, "error": (
+            "这一镜的素材里人正在说话（原声：「{}」），换成克隆配音会导致**口型和话对不上**。"
+            "请改用 place_original（同一个 global_asset_id={}，不换素材）保留用户原声；"
+            "确实要换掉这段说话画面，就先 place 一个没有人说话的片段再配音。"
+        ).format(_norm_text(_spoken)[:30], _p.get("global_asset_id", ""))}
+    # 同一 slot 重复提交同一条文案 = 空转（每次 TTS 要几十秒）。直接拦住并提示下一步。
+    prev = (ctx.get("tts_by_slot") or {}).get(slot_id) or {}
+    if prev.get("text", "").strip() == text and prev.get("audio_path"):
+        return {"ok": False, "error": (
+            f"{slot_id} 已经用这条文案配过音了（不要重复提交同一条）。若还有别的 slot 没配音就去配，"
+            "都配完了就输出 finish；若想改这一镜的文案，请给一条**不同的** text。")}
+    # 字数硬约束：文案过长 -> TTS 比画面长得多，成片只能冻结末帧补足（画面静止数秒）。
+    # 上限 = ref_cps(参考该段语速) × 该镜时长；没有 ref_cps 时按 5 字/秒兜底。
+    meta = ctx.get("slot_meta", {}).get(slot_id) or {}
+    target = float(meta.get("target_duration") or 0.0)
+    cps = float((meta.get("whq_voice") or {}).get("ref_cps") or 0) or 5.0
+    limit = int(max(8, target * cps)) if target > 0 else 0
+    n = len(re.sub(r"[^\w\u4e00-\u9fff]+", "", text))
+    if limit and n > limit:
+        return {"ok": False, "error": (
+            "文案过长：{} 字 > 本镜上限 {} 字（该镜 {:.1f}s × 参考语速 {:.1f} 字/秒）。"
+            "配音比画面长会导致成片冻结末帧、画面静止。请压缩到 {} 字以内重试。"
+        ).format(n, limit, target, cps, limit)}
+    # 事实核验：文案不能出现"参考爆款有、用户素材里没有"的说法/数字（抹茶奶绿、51.7%、29.9元…）
+    corpora = ctx.get("fact_corpora") or ()
+    if len(corpora) == 2:
+        bad = _copy_violations(text, corpora[0], corpora[1])
+        if bad:
+            return {"ok": False, "error": (
+                "文案里这些内容来自**参考爆款那个商品**、用户素材里查不到出处：{}。"
+                "请只讲本镜 material（该镜实际画面 + 该片段原声）里真实存在的东西重写；"
+                "本商品没有对应卖点时，就只描述画面/使用感受，不要下事实断言。"
+            ).format("、".join("「%s」" % b for b in bad))}
+    # 文案不许和别的镜头重复：同一个卖点/说法讲两遍是最刺耳的"逻辑不通"。按 6 字连续
+    # 重叠判定（含上一轮补配音生成的文案、以及原声段的字幕）。
+    _mine = _norm_text(text)
+    for _sid, _it in (ctx.get("tts_by_slot") or {}).items():
+        if _sid == slot_id:
+            continue
+        _other = _norm_text((_it or {}).get("text", ""))
+        _dup = next((_mine[i:i + 6] for i in range(0, max(0, len(_mine) - 5))
+                     if _mine[i:i + 6] in _other), "")
+        if _dup:
+            return {"ok": False, "error": (
+                "这条文案和 {} 的配音重复了（都出现「{}」）。同一个说法全片只能讲一次，"
+                "请改成**本镜画面自己**该讲的内容（按它在叙事里的位置：痛点/产品登场/"
+                "用法演示/效果呈现/催单），并和前后镜自然衔接。"
+            ).format(_sid, _dup)}
+    for _sid, _pp in (ctx.get("placements") or {}).items():
+        if _sid == slot_id:
+            continue
+        _other = _norm_text((_pp or {}).get("caption", ""))
+        if not _other:
+            continue
+        _dup = next((_mine[i:i + 6] for i in range(0, max(0, len(_mine) - 5))
+                     if _mine[i:i + 6] in _other), "")
+        if _dup:
+            return {"ok": False, "error": (
+                "这条文案和 {} 的原声字幕重复了（都出现「{}」）。请换成本镜画面自己该讲的内容。"
+            ).format(_sid, _dup)}
     tts_dir = os.path.join(AGENT_ROOT, "uploads", "tts")
     os.makedirs(tts_dir, exist_ok=True)
     out_wav = os.path.join(tts_dir, f"tts_{slot_id}_{int(time.time() * 1000) % 1000000}.wav")
@@ -391,20 +684,55 @@ async def _handle_tts_clone(ctx: dict, action: dict) -> dict:
                                   seg.get("speech_or_text", ""), text, out_wav)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error", "TTS 失败")}
+    # 生成后按**实际配音时长**兜一道：字数上限只是估算，语速慢时仍可能超出画面可用长度，
+    # 超了成片会冻结末帧（画面卡住不动）。此时丢弃这段配音，让 Agent 按可用秒数重写。
+    dur = float(res.get("duration") or 0.0)
+    p = (ctx.get("placements") or {}).get(slot_id) or {}
+    a, b = _parse_range(p.get("source_time_range", ""))
+    total = _video_duration(_abspath(p.get("source_path", "")))
+    avail = max(b - a, (total - a) if total > a else 0.0)   # 可从源片往后延到片尾
+    if avail > 0.5 and dur > avail + 0.4:
+        try:
+            os.remove(out_wav)
+        except OSError:
+            pass
+        return {"ok": False, "error": (
+            "这段配音 {:.1f}s，但该镜画面最多只有 {:.1f}s（源片到片尾就这么长），"
+            "成片会冻结末帧、画面卡住不动。请把文案压到约 {} 字以内重写；"
+            "或先用 place 换一段更长的素材、或用 skip_slot 跳过这一段。"
+        ).format(dur, avail, max(6, int(avail * cps)))}
     ctx.setdefault("tts_by_slot", {})[slot_id] = {
         "audio_path": out_wav, "text": text, "duration": res.get("duration", 0.0)}
     return {"ok": True, "slot_id": slot_id, "duration": res.get("duration", 0.0),
             "note": "已生成克隆配音；该镜将改用此配音、字幕=该文案"}
 
 
+def _material_brief(toolbox, gid, limit=160):
+    """某片段的实际内容摘要：画面描述 +（若有）片段自带口播。
+
+    写 tts_clone 文案时必须**只讲这段素材里真实有的东西**——DNA 的 role/want 来自另一条
+    参考爆款，照它写会把参考商品的成分/喝法/价格搬到本商品头上（whq 的老坑）。
+    """
+    seg = (getattr(toolbox, "by_gid", {}) or {}).get(gid) or {}
+    if not seg:
+        return ""
+    desc = (seg.get("visual_description") or seg.get("one_sentence_summary") or "")[:limit]
+    speech = ((seg.get("whq_speech") or {}).get("text") or seg.get("speech_or_text") or "")[:80]
+    return desc + ("｜该片段原声：" + speech if speech else "")
+
+
 async def _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, history, edit_system,
                           base_placements=None, base_tts=None, revise_slots=None,
-                          enable_tts=True, pure_music=False):
+                          enable_tts=True, pure_music=False, voice_only_slots=None,
+                          fact_corpora=None):
     """剪辑 Agent 的 ReAct 循环：自由召回 → 按需验证 → 放入（后台查重叠→仲裁）→ finish。
 
     增量重剪：base_placements/base_tts 是上一轮的成片基线（继承过来，不重排）；
     revise_slots 是审片点名要改的 slot——只有这些进入待办，其余 slot 默认保留上一轮结果，
     避免"为修一个镜头把其它已 OK 的镜头也重排坏了"的回归。首轮 base 为空则填全部 slot。
+
+    voice_only_slots：**只配音不改画面**模式（whq 复刻用）。画面已由编排定好，这些 slot
+    缺配音（whq 判定该段要克隆配音），Agent 只需为它们调 tts_clone 写文案。
 
     作为异步生成器：过程中 yield step 事件；最后 yield
     ``{"__edit_result__": True, "placements": {...}, "notes": [...], "tts_by_slot": {...}}``。
@@ -428,7 +756,10 @@ async def _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, histo
     for _sid, _p in placements.items():
         _register(_sid, _p)
 
-    if base_placements and revise_slots:
+    if voice_only_slots:
+        # 只配音模式：画面已定好，待办 = 缺配音的 slot（Agent 只对它们调 tts_clone）
+        unfilled = [s for s in voice_only_slots if s in slot_meta]
+    elif base_placements and revise_slots:
         # 增量重剪：只把审片点名的 slot 列为待办；其余保留基线
         unfilled = [s for s in revise_slots if s in slot_meta]
     elif base_placements:
@@ -476,18 +807,45 @@ async def _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, histo
                              "系统也不提供字幕烧录能力**。")
         agent_user = json.dumps({
             "dna": dna,
-            "slots": [{"slot_id": s["slot_id"], "role": s["role"], "want": s["want"],
-                       "target_duration": s["target_duration"]} for s in slots],
+            "slots": [dict({"slot_id": s["slot_id"], "role": s["role"], "want": s["want"],
+                            "target_duration": s["target_duration"]},
+                           **({"whq_voice": s["whq_voice"]} if s.get("whq_voice") else {}))
+                      for s in slots],
             "narrative": narrative,
             "mode": {"enable_tts": enable_tts, "pure_music": pure_music},
             "review_feedback": review_feedback,
             "history_brief": [{"loop": h["loop"], "problems": h.get("problems", [])} for h in history[-2:]],
             "baseline_placements": [{"slot_id": k, "gid": v.get("global_asset_id"),
                                      "caption": v.get("caption") or v.get("speech", ""),
+                                     # 该镜**实际画面内容**（写配音文案的唯一依据；DNA 的 want
+                                     # 来自另一条参考爆款，只表示这一段承担的叙事功能）
+                                     "material": _material_brief(toolbox, v.get("global_asset_id")),
                                      "tts": k in tts_by_slot} for k, v in placements.items()],
             "slots_to_revise": unfilled,
             "recent_steps": scratch[-8:],
             "instruction": (" ".join(mode_bits) + " " if mode_bits else "") + (
+                ("【只配音模式】所有镜头的**画面已由编排定好**（见 baseline_placements），"
+                 "**不要**用 retrieve 重新召回、也不要 place 换别的素材改动画面。"
+                 "对 slots_to_revise 里的每个 slot，先看它 baseline_placements 里的 material：\n"
+                 "① 如果 material 显示**该片段自带原声口播**（有「该片段原声：…」），"
+                 "**优先用 place_original 保留用户真声**（同一个 global_asset_id，不换素材，"
+                 "它只会把窗口吸附到自然停顿、把字幕设成那句原话）——真人口型对得上，比克隆配音好；"
+                 "编排把这段标成 clone 只是因为它按「拉伸填满槽位」估算过，Agent 出片不拉伸，"
+                 "所以有真声就该用真声。\n"
+                 "② 只有 material 里**确实没有原声**时，才对它调 tts_clone。写 text 的依据是"
+                 "**该 slot 的 material（这一镜的实际画面内容）**——只讲这段素材画面里真实有的东西；"
+                 "DNA 的 role/want 来自另一条参考爆款，**只用来判断这一段承担什么叙事功能**"
+                 "（痛点/产品登场/配料特写/使用演示/价格/催单），里面的商品名/成分/含量/价格/喝法"
+                 "一律不许写进文案。再结合 narrative 让前后自然衔接，"
+                 "字数不超过 whq_voice.ref_cps × 该镜时长（配音比画面长会导致画面卡住不动）。\n"
+                 "若某个 slot 的画面内容与它要承担的叙事功能完全对不上（如参考要求"
+                 "「改数量下单演示」但素材里没有任何下单/价格画面），用 skip_slot 跳过该段，"
+                 "**不要编造素材里没有的价格/活动/成分**。"
+                 "结束前逐个确认：slots_to_revise 里每个 slot 要么已 place_original 保留原声、"
+                 "要么已 tts_clone 配上音、要么已 skip_slot——**不要留下既没原声又没配音的哑巴段**"
+                 "（画面里有人但没说话的镜头必须 tts_clone，不能就这么静着过去）。"
+                 "全部处理完后输出 {\"action\":\"finish\"}。")
+                if voice_only_slots else
                 ("增量重剪模式：baseline_placements 是上一轮已成片的镜头，**只修订 slots_to_revise 里点名的 slot**，"
                  "其余镜头保持不动、不要重新召回或改动。改完点名的 slot 就输出 {\"action\":\"finish\"}。")
                 if incremental else
@@ -585,7 +943,12 @@ async def _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, histo
             if handler:
                 ctx = {"toolbox": toolbox, "used": used, "placements": placements,
                        "slot_meta": slot_meta, "notes": notes, "tts_by_slot": tts_by_slot,
-                       "enable_tts": enable_tts, "pure_music": pure_music}
+                       "enable_tts": enable_tts, "pure_music": pure_music,
+                       # 放片类扩展工具（如 whq_clone 的 place_original）需要这两个才能
+                       # 把 slot 标记为已填 + 参与重叠检测
+                       "unfilled": unfilled, "register": _register,
+                       # (用户素材语料, 参考爆款语料)：tts_clone 用它核验文案没抄参考商品的事实
+                       "fact_corpora": fact_corpora}
                 try:
                     obs = await handler(ctx, action)
                 except Exception as exc:  # noqa: BLE001
@@ -596,6 +959,34 @@ async def _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, histo
                 scratch.append({"action": str(act), "observation": {"ok": False, "error": "未知动作，请用 retrieve/verify/place/finish"}})
 
     yield {"__edit_result__": True, "placements": placements, "notes": notes, "tts_by_slot": tts_by_slot}
+
+
+def _voice_plan_brief(slots, placements, tts_by_slot):
+    """逐 slot 的声音方案，交给审片 Agent 判「该用原声的段是不是被换成了克隆配音」。
+
+    whq 结构级复刻里 whq_voice.voice_source 是编排阶段定的基线（expected），actual 是本轮
+    剪辑 Agent 实际的选择：original=保留用户真声、clone=克隆配音、none=未配音。
+    """
+    out = []
+    for s in slots or []:
+        sid = s.get("slot_id")
+        p = placements.get(sid) or {}
+        if sid in (tts_by_slot or {}):
+            actual = "clone"
+            text = (tts_by_slot[sid] or {}).get("text", "")
+        elif p.get("voice_source") == "original" or p.get("speech"):
+            actual = "original"
+            text = p.get("caption") or p.get("speech", "")
+        else:
+            actual = "none"
+            text = p.get("caption", "")
+        item = {"slot_id": sid, "actual_voice": actual, "text": text}
+        wv = s.get("whq_voice") or {}
+        if wv:
+            item["expected_voice"] = wv.get("voice_source")
+            item["ref_cps"] = wv.get("ref_cps")
+        out.append(item)
+    return out
 
 
 def _estep(rid, key, title, *, thought="", state="done", observation=None):
@@ -716,6 +1107,16 @@ async def agent_edit_stream(strategy_path: str, *, enable_bgm: bool = True, max_
                      rid, contracts.CONTRACT_VERSION, contracts.summarize(_cp))
     context = _load_context(strategy_abs, strategy)
     inputs = _load_inputs(strategy, context)
+    # whq_clone 链路：挂上 place_original 工具（句子级对窗保留用户原声）。工具是链路专属的，
+    # 只在方案确实来自 whq 编排时注册，其他链路的 prompt 不受影响。
+    if (strategy.get("metadata") or {}).get("reproduce_mode") == "whq_clone" \
+            or context.get("source") == "whq_clone":
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "whq_clone"))
+            import agent_tools as _whq_agent_tools  # noqa: F401  import 即注册
+            _log.info("[%s] whq_clone: place_original 工具已挂载", rid)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("[%s] whq_clone place_original 挂载失败(退化为 place+tts_clone)：%s", rid, exc)
     slots = inputs["slots"]
     aigc_slots = inputs.get("aigc_slots", []) or []
     do_aigc = (missing_shot_mode or "").lower() == "aigc" and bool(aigc_slots)
@@ -730,6 +1131,8 @@ async def agent_edit_stream(strategy_path: str, *, enable_bgm: bool = True, max_
         return
     task_id = "agentedit_" + hashlib.sha1(strategy_abs.encode("utf-8")).hexdigest()[:12]
     toolbox = EditToolbox(task_id, segments)
+    # 文案事实核验语料：用户素材说了什么 vs 参考爆款说了什么（见 _copy_violations）
+    fact_corpora = _fact_corpora(context, toolbox)
 
     # 缺失镜头 AIGC 补齐：missing_shot_mode=aigc 时，为需生成的镜头起 AIGC 子 Agent（并发≤5）
     # 生成本地片段，并入 slots + presets，后续与用户素材镜头一起进剪辑/审片。
@@ -812,7 +1215,15 @@ async def agent_edit_stream(strategy_path: str, *, enable_bgm: bool = True, max_
         # 1) 出片计划
         incr = bool(prev_placements and revise_slots)
         seeded_all = bool(prev_placements) and not revise_slots and all(s["slot_id"] in prev_placements for s in slots)
-        if seeded_all:
+        # whq 复刻：编排把某些段判为"该走克隆配音"（无可用原声）。这些段只有画面、没有口播，
+        # 直接采用基线会得到「画面对但全程没配音没字幕」的成片 —— 必须让 Agent 为它们配音。
+        voice_slots = []
+        if seeded_all and enable_tts and not pure_music:
+            voice_slots = [s["slot_id"] for s in slots
+                           if (s.get("whq_voice") or {}).get("voice_source") == "clone"
+                           and not (prev_placements.get(s["slot_id"], {}) or {}).get("speech")
+                           and s["slot_id"] not in prev_tts]
+        if seeded_all and not voice_slots:
             # 复刻方案已为每个 slot 选好片段 → **直接采用，不跑剪辑 Agent、不重新召回**，
             # 保证成片片段与复刻分镜完全一致（后续审片再按需增量改）。
             yield step(f"edit{loop}", f"第 {loop} 轮 · 采用复刻分镜选片",
@@ -823,24 +1234,55 @@ async def agent_edit_stream(strategy_path: str, *, enable_bgm: bool = True, max_
             tts_by_slot = dict(prev_tts)
             notes = ["直接采用复刻方案选片"]
         else:
-            title = ("（增量修订：" + "、".join(revise_slots) + "）") if incr else "自由召回选片"
-            desc = ("只重剪审片点名的镜头，其余保留上一轮" if incr else
-                    "从全池按 DNA 角色召回、按需验证、放入并后台查重叠")
+            voice_only = bool(seeded_all and voice_slots)
+            if voice_only:
+                title = "（只配音：" + "、".join(voice_slots) + "）"
+                desc = "画面沿用复刻分镜不动，只为无原声的镜头生成克隆配音 + 字幕文案"
+            else:
+                title = ("（增量修订：" + "、".join(revise_slots) + "）") if incr else "自由召回选片"
+                desc = ("只重剪审片点名的镜头，其余保留上一轮" if incr else
+                        "从全池按 DNA 角色召回、按需验证、放入并后台查重叠")
             yield step(f"edit{loop}", f"第 {loop} 轮 · 剪辑 Agent{title}", desc, state="running")
             placements, notes = {}, []
             tts_by_slot = {}
             async for ev in _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, history, edit_sys,
                                             base_placements=(prev_placements or None), base_tts=(prev_tts or None),
-                                            revise_slots=revise_slots, enable_tts=enable_tts, pure_music=pure_music):
+                                            revise_slots=revise_slots, enable_tts=enable_tts, pure_music=pure_music,
+                                            voice_only_slots=(voice_slots if voice_only else None),
+                                            fact_corpora=fact_corpora):
                 if ev.get("__edit_result__"):
                     placements, notes = ev["placements"], ev["notes"]
                     tts_by_slot = ev.get("tts_by_slot", {})
                     continue
                 yield ev
+        # 兜底补配音：Agent 有时会漏掉"既没原声、也没配音"的镜头（哑巴段）。这里客观检测
+        # 出来，再跑一轮**只配音**把它们补上（最多补一次，避免无限循环）。带货成片不能有
+        # 整段没人声的空档。
+        if enable_tts and not pure_music:
+            mute = _mute_slots(placements, slots, tts_by_slot, toolbox)
+            if mute:
+                yield step(f"mute{loop}", f"第 {loop} 轮 · 补配音（{len(mute)} 段哑巴）",
+                           "检测到既无原声又无配音的镜头：" + "、".join(mute) + "，补生成克隆配音",
+                           state="running")
+                async for ev in _run_edit_agent(rid, loop, toolbox, slots, dna, review_feedback, history, edit_sys,
+                                                base_placements=placements, base_tts=tts_by_slot,
+                                                enable_tts=enable_tts, pure_music=pure_music,
+                                                voice_only_slots=mute, fact_corpora=fact_corpora):
+                    if ev.get("__edit_result__"):
+                        placements = ev["placements"]
+                        tts_by_slot = ev.get("tts_by_slot", tts_by_slot)
+                        notes += ev.get("notes", [])
+                        continue
+                    yield ev
+                still = _mute_slots(placements, slots, tts_by_slot, toolbox)
+                yield step(f"mute{loop}", f"第 {loop} 轮 · 补配音",
+                           ("已补齐全部哑巴段" if not still else "仍有无声段：" + "、".join(still)),
+                           state="done")
         # 本轮的成片计划成为下一轮的基线（下一轮据本轮审片只改被点名的 slot）
         prev_placements, prev_tts = placements, tts_by_slot
         clips = _placements_to_clips(placements, slots, tts_by_slot, burn_captions=burn_on)
         _dedup_clips(clips, toolbox, slots)  # 成片级去重：同段素材被多镜复用 → 换未用过的素材
+        _snap_clips_to_sentences(clips, toolbox)  # 保原声的镜头：结束点吸到自然停顿，别把话切一半
         if beats:
             _snap_clips_to_beats(clips, beats)  # 卡点：结束点吸附到 BGM 鼓点
         note = "；".join(notes[:3])
@@ -904,6 +1346,13 @@ async def agent_edit_stream(strategy_path: str, *, enable_bgm: bool = True, max_
         base_instruction = (
             "请观看视频，对照 DNA 判定是否符合预期；镜头时长以内容表达自然为准，不要要求与目标秒数一致。"
             "参考 asr_check 里的 ASR 时间戳判断口播是否被截断；并判断每镜声音是否为真实产品口播（而非环境杂音/拍摄现场指导语）。"
+            "【跨品类复刻·最高优先级】DNA 来自**另一条参考爆款**，只借它的叙事结构/节奏/镜头功能；"
+            f"本片实际带货的商品是「{inputs['product_name']}」（若此处未给出明确商品名，"
+            "则以**用户素材画面里实际出现的那个商品**为准），用户素材拍的就是这个商品。"
+            "DNA 的 role/want 里出现的**参考商品品类名、成分、价格、喝法**都属于参考视频那个商品，"
+            "**不属于本片**。严禁因为「素材不是 DNA 里提到的那个商品」而列为问题、扣分或判 material_limited；"
+            "请把 DNA 的每条 want 理解成它的**叙事功能**（痛点铺垫/产品登场/配料表特写/使用演示/价格/催单），"
+            "只评判本片这一镜有没有承担起该功能。"
         )
         if pure_music:
             # 空镜/纯音乐复刻：成片本就静音、无口播、无字幕，审片不得据此扣分或要求配音
@@ -915,7 +1364,9 @@ async def agent_edit_stream(strategy_path: str, *, enable_bgm: bool = True, max_
             )
         review_user = json.dumps({
             "dna": review_dna, "this_loop_ops": ops_brief,
+            "product_name": inputs["product_name"],
             "asr_check": asr_check,
+            "voice_plan": _voice_plan_brief(slots, placements, tts_by_slot),
             "mode": {"pure_music": pure_music, "空镜剪辑": pure_music,
                      "expect_speech": (not pure_music)},
             "history": [{"loop": h["loop"], "note": h.get("edit_note", ""), "problems": h.get("problems", [])} for h in history[-4:]],

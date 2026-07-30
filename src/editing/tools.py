@@ -105,6 +105,20 @@ EDIT_FUNCTION_TOOLS = [FunctionTool(fn) for fn in
 EDIT_TOOLKIT = Toolkit(tools=EDIT_FUNCTION_TOOLS)
 
 
+def register_edit_tool(fn):
+    """把一个新工具的**契约声明**追加进剪辑 Agent 的工具清单（幂等，按函数名去重）。
+
+    与 ``edit_tool_handler``（执行处理器）配套：声明进 prompt、执行走 handler。链路专属
+    工具（如 whq_clone 的 place_original）用它在 import 时挂上，不必改动本文件。
+    """
+    name = getattr(fn, "__name__", "")
+    if any(getattr(ft, "name", "") == name for ft in EDIT_FUNCTION_TOOLS):
+        return
+    ft = FunctionTool(fn)
+    EDIT_FUNCTION_TOOLS.append(ft)
+    EDIT_TOOLKIT.add_tools([ft]) if hasattr(EDIT_TOOLKIT, "add_tools") else None
+
+
 def render_tools_spec(tools=None) -> str:
     """把 FunctionTool（AgentScope 自动生成的 schema）渲染成 prompt 里的工具清单 + 调用模板。"""
     tools = tools or EDIT_FUNCTION_TOOLS
@@ -196,7 +210,7 @@ class EditToolbox:
             if gid in exclude:
                 continue
             meta = m.get("meta", {})
-            out.append({
+            item = {
                 "global_asset_id": gid,
                 "source_path": meta.get("source_path", ""),
                 "source_time_range": meta.get("source_time_range", ""),
@@ -207,7 +221,14 @@ class EditToolbox:
                 "keywords": (meta.get("keywords", []) or [])[:6],
                 "quality": meta.get("quality_score", 0.0),
                 "rrf_score": m.get("rrf_score", 0.0),
-            })
+            }
+            # whq_clone 链路：素材池带「该片段窗口内是否自带用户真声」的标注（见
+            # whq_clone/strategy_out.build_context），召回时透出去让 Agent 优先保留原声。
+            ws = (self.by_gid.get(gid) or {}).get("whq_speech")
+            if isinstance(ws, dict):
+                item["has_original_voice"] = bool(ws.get("has_speech"))
+                item["speech"] = item["speech"] or ws.get("text", "")
+            out.append(item)
             if len(out) >= top_k:
                 break
         return {"query": query, "candidates": out, "backend": res.get("backend", ""),

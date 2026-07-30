@@ -48,6 +48,18 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key) or _split_env().get(key) or default
 
 
+def _tts_bin() -> tuple:
+    """(解释器, 脚本)：Agent 剪辑用的克隆模型。
+
+    优先 ``AGENT_TTS_PYTHON`` / ``AGENT_TTS_SCRIPT``，回退到通用的 ``TTS_PYTHON`` /
+    ``TTS_SCRIPT``（Split .env 里的 CosyVoice3）。**要单独一组变量**是因为 whq 的 legacy
+    workflow 链路也在用 TTS_PYTHON 跑它自己的 build_tts_overlay 包装器，直接改那个会把
+    两条链路一起换掉。契约一致（--prompt-wav/--prompt-asr/--text/--output）就能换模型。
+    """
+    return (_cfg("AGENT_TTS_PYTHON") or _cfg("TTS_PYTHON"),
+            _cfg("AGENT_TTS_SCRIPT") or _cfg("TTS_SCRIPT"))
+
+
 def _abspath(path: str) -> str:
     if not path:
         return ""
@@ -112,9 +124,9 @@ def _wav_duration(path: str) -> float:
 
 
 def available() -> bool:
-    """CosyVoice 脚本/解释器/模型是否就绪。"""
-    return all(os.path.exists(_cfg(k)) for k in ("TTS_PYTHON", "TTS_SCRIPT", "TTS_MODEL_DIR") if _cfg(k)) \
-        and bool(_cfg("TTS_PYTHON")) and bool(_cfg("TTS_SCRIPT"))
+    """克隆脚本/解释器是否就绪。"""
+    py, script = _tts_bin()
+    return bool(py and os.path.exists(py) and script and os.path.exists(script))
 
 
 def clone(ref_source_path: str, ref_time_range: str, ref_speech: str, text: str, out_wav: str) -> dict:
@@ -128,9 +140,9 @@ def clone(ref_source_path: str, ref_time_range: str, ref_speech: str, text: str,
     src = _abspath(ref_source_path)
     if not src or not os.path.isfile(src):
         return {"ok": False, "error": f"参考素材不存在：{ref_source_path}"}
-    tts_python, tts_script = _cfg("TTS_PYTHON"), _cfg("TTS_SCRIPT")
+    tts_python, tts_script = _tts_bin()
     if not (tts_python and os.path.exists(tts_python) and tts_script and os.path.exists(tts_script)):
-        return {"ok": False, "error": "CosyVoice 未配置（TTS_PYTHON/TTS_SCRIPT 缺失）"}
+        return {"ok": False, "error": "声音克隆模型未配置（AGENT_TTS_PYTHON/AGENT_TTS_SCRIPT 或 TTS_PYTHON/TTS_SCRIPT 缺失）"}
 
     tmpdir = tempfile.mkdtemp(prefix="agenttts_")
     prompt_wav = os.path.join(tmpdir, "prompt.wav")
@@ -151,15 +163,15 @@ def clone(ref_source_path: str, ref_time_range: str, ref_speech: str, text: str,
                 env[k] = _cfg(k)
         cmd = [tts_python, tts_script, "--prompt-wav", prompt_wav, "--prompt-asr", prompt_asr,
                "--text", text, "--output", _abspath(out_wav)]
-        _log.info("tts clone: text=%r ref=%s", text[:40], os.path.basename(src))
+        _log.info("tts clone(%s): text=%r ref=%s", os.path.basename(tts_script), text[:40], os.path.basename(src))
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TTS_TIMEOUT, env=env)
         if r.returncode != 0:
             err = r.stderr.decode("utf-8", "ignore")[-300:]
-            _log.warning("cosyvoice failed: %s", err)
-            return {"ok": False, "error": f"CosyVoice 失败：{err}"}
+            _log.warning("tts clone failed (%s): %s", os.path.basename(tts_script), err)
+            return {"ok": False, "error": f"声音克隆失败（{os.path.basename(tts_script)}）：{err}"}
         outp = _abspath(out_wav)
         if not os.path.isfile(outp) or os.path.getsize(outp) == 0:
-            return {"ok": False, "error": "CosyVoice 未产出音频"}
+            return {"ok": False, "error": "声音克隆未产出音频"}
         return {"ok": True, "output": out_wav, "duration": _wav_duration(outp)}
     finally:
         for p in (prompt_wav, prompt_asr):
