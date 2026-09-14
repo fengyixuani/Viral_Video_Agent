@@ -26,10 +26,7 @@ import obs
 _log = obs.get_logger("retriever")
 
 QIANFAN_BASE_URL = os.getenv("QIANFAN_BASE_URL", "https://qianfan.baidubce.com/v2")
-QIANFAN_API_KEY = os.getenv(
-    "QIANFAN_API_KEY",
-    "",
-)
+QIANFAN_API_KEY = os.getenv("QIANFAN_API_KEY", "")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding-0.6b")
 EMBED_TIMEOUT = int(os.getenv("EMBED_TIMEOUT", "60"))
 EMBED_BATCH = int(os.getenv("EMBED_BATCH", "32"))
