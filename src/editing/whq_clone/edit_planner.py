@@ -34,7 +34,7 @@ except Exception:  # pragma: no cover
 # 保留原声(见 voice_policy: 有口播+人脸->original)。默认关闭, 由 WHQ_PREFER_ORIGINAL_VOICE=1
 # 开启(对其他项目零影响)。口播度量复用 voice_policy 的窗口口播/覆盖率口径, 与决策一致。
 try:
-    from voice_policy import window_speech, MIN_SPEECH_CHARS, MIN_SPEECH_COVERAGE
+    from voice_policy import window_speech, MIN_SPEECH_CHARS, MIN_SPEECH_COVERAGE, is_filler_speech
     _HAS_VP = True
 except Exception:  # pragma: no cover
     _HAS_VP = False
@@ -86,7 +86,10 @@ def build_speech_map(candidates, speech_records):
         dur = float(c.get("duration") or 0.0)
         if rec and dur > 0:
             text, cov, _ = window_speech(rec, start, dur)
-            has = len(text) >= MIN_SPEECH_CHARS and cov >= MIN_SPEECH_COVERAGE
+            # 现场废话(拍摄口令/口水话)不算可用口播: 否则匹配阶段会偏向这类候选, 下游又只能
+            # 判克隆 —— 白占了一个"自带口播"的名额。
+            has = (len(text) >= MIN_SPEECH_CHARS and cov >= MIN_SPEECH_COVERAGE
+                   and not is_filler_speech(text)[0])
             out[c["global_asset_id"]] = {"chars": len(text), "coverage": round(cov, 3),
                                          "has_speech": has, "text": text}
         else:

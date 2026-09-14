@@ -1,7 +1,8 @@
 """finisher — 成片收尾: 烧录配音字幕(文案) + 可选迁移参考视频真实 BGM。
 
-字幕: 直接用配音脚本(voiceover 的 TTS plan items)按时间轴生成 SRT, ffmpeg subtitles
-      滤镜(libass)烧白字黑边, 与主流水线 burn_synced_captions 风格一致。
+字幕: 默认走 captions_clone —— 复刻**参考视频的字幕特效**(配色/字号/位置/特效 + 逐字揭示,
+      逐字时间来自对成片跑一次词级 ASR); WHQ_CAPTION_CLONE=0 或链路不可用时, 回退用配音脚本
+      (voiceover 的 TTS plan items)生成句级 SRT, ffmpeg subtitles 滤镜(libass)烧白字黑边。
 BGM : 复用 whq_get_bgm/run.sh 把**参考视频真实 BGM** 迁移到成片(最贴近参考); 需 meishe
       环境, 不可达时优雅跳过, 保留「有配音+字幕」的成片。
 """
@@ -58,9 +59,28 @@ def _wrap(text, max_width=28):
     return "\\N".join([lines[0], "".join(lines[1:])])
 
 
-def burn_captions(video, tts_items, out_video, work_dir):
-    """按 TTS plan items(start/end/text)生成 SRT 并烧录到视频。"""
+def _try_caption_clone(video, tts_items, out_video, work_dir, ref_video):
+    """试跑参考字幕特效复刻; 关闭/不可用/失败一律返回 None(调用方回退句级 SRT)。"""
+    try:
+        from captions_clone import burn_styled_captions
+    except Exception as exc:  # noqa: BLE001
+        print("[finisher] captions_clone 不可用(回退句级 SRT): {}".format(str(exc)[:200]),
+              flush=True)
+        return None
+    return burn_styled_captions(video, tts_items, out_video,
+                                os.path.join(work_dir, "clone"), ref_video=ref_video)
+
+
+def burn_captions(video, tts_items, out_video, work_dir, ref_video=None):
+    """按 TTS plan items(start/end/text)烧字幕。
+
+    默认先试【参考字幕特效复刻】(captions_clone: 跟参考视频同配色/字号/位置/特效 + 逐字揭示,
+    WHQ_CAPTION_CLONE=0 可关); 复刻链路任一步不可用则回退这里原有的句级 SRT 白字黑边。
+    """
     os.makedirs(work_dir, exist_ok=True)
+    styled = _try_caption_clone(video, tts_items, out_video, work_dir, ref_video)
+    if styled:
+        return styled
     srt = os.path.join(work_dir, "captions.srt")
     entries = []
     for it in tts_items:
@@ -107,7 +127,8 @@ def migrate_reference_bgm(ref_video, target_video, out_video, endpoint="online")
 
 def finish(voiced_video, tts_items, out_captioned, work_dir,
            ref_video=None, out_final=None, migrate_bgm=False, endpoint="online"):
-    captioned = burn_captions(voiced_video, tts_items, out_captioned, work_dir)
+    captioned = burn_captions(voiced_video, tts_items, out_captioned, work_dir,
+                              ref_video=ref_video)
     final = captioned
     if migrate_bgm and ref_video and out_final:
         bgm_out = migrate_reference_bgm(ref_video, captioned, out_final, endpoint=endpoint)

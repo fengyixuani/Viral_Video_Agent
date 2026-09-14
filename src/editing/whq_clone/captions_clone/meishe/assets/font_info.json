@@ -1,0 +1,77 @@
+[
+    {
+        "style": "力量",
+        "class": "黑体",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "LXGWWenKai-Light",
+        "font_path": "resource/fonts/BiaoXiaoZhiBiaoTiHei/标小智无界黑.ttf"
+    },
+    {
+        "style": "青春",
+        "class": "创意字",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "SourceHanSerifCN-SemiBold",
+        "font_path": "resource/fonts/HanChanShouZhuoTi/HCSZT-Regular.ttf"
+    },
+    {
+        "style": "现代、加粗",
+        "class": "黑体",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "字体圈欣意冠黑体",
+        "font_path": "resource/fonts/字体圈欣意冠黑体.ttf",
+        "ecommerce_category": "3c数码"
+    },
+    {
+        "style": "趣味、手写",
+        "class": "创意字",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "站酷庆科黄油体",
+        "font_path": "resource/fonts/站酷庆科黄油体.ttf",
+        "ecommerce_category": "化妆品"
+    },
+    {
+        "style": "现代",
+        "class": "黑体",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "站酷仓耳渔阳体W05",
+        "font_path": "resource/fonts/站酷仓耳渔阳体W05.ttf",
+        "ecommerce_category": "服装"
+    },
+    {
+        "style": "趣味、童趣",
+        "class": "创意字",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "ChildFunSansDemo",
+        "font_path": "resource/fonts/ChildFunSansDemo.ttf",
+        "ecommerce_category": "食品"
+    },
+    {
+        "style": "优雅",
+        "class": "黑体",
+        "lang": [
+            "zh",
+            "en"
+        ],
+        "font_name": "SmileySans-Oblique",
+        "font_path": "resource/fonts/SmileySans-Oblique.ttf",
+        "ecommerce_category": "饰品"
+    }
+]

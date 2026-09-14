@@ -1,0 +1,9 @@
+# Selector CLI and the portable adapter
+requests>=2.31
+imageio-ffmpeg>=0.6
+
+# Only required by the VoxCPM2 backend environment, not by the selector:
+# voxcpm==2.0.3
+# soundfile>=0.12
+# torch==2.11.0+cu128
+# torchaudio==2.11.0+cu128

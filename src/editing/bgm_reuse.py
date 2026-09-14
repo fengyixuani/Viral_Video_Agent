@@ -66,7 +66,11 @@ def extract_reference_bgm(video_uri: str, *, pure_music: bool = False) -> dict:
     if not src:
         return {"ok": False, "error": "参考视频不是本地文件，无法复用 BGM"}
     os.makedirs(OUT_DIR, exist_ok=True)
-    out_wav = os.path.join(OUT_DIR, f"bgm_{_key(src, pure_music)}.wav")
+    # 缓存文件名带上产出方式：纯音乐整轨(track) / demucs 伴奏(demucs)。
+    # 旧的 bgm_<key>.wav 是「没有 demucs 就抽整轨」时代的产物（含人声），换名等于自然作废，
+    # 不会被当成伴奏复用。
+    tag = "track" if pure_music else "demucs"
+    out_wav = os.path.join(OUT_DIR, f"bgm_{_key(src, pure_music)}_{tag}.wav")
     if os.path.isfile(out_wav) and os.path.getsize(out_wav) > 0:
         return {"ok": True, "output": out_wav, "mode": "cached"}
 
@@ -78,10 +82,20 @@ def extract_reference_bgm(video_uri: str, *, pure_music: bool = False) -> dict:
 
     # 含口播：demucs 人声/伴奏分离，取 no_vocals 作 BGM
     if not (DEMUCS_PYTHON and os.path.exists(DEMUCS_PYTHON)):
-        # 没有 demucs 环境 → 退化为直接抽取整条音轨（可能含人声）
-        _log.warning("demucs python 不存在，退化为直接抽音轨")
-        if _extract_audio(src, out_wav):
-            return {"ok": True, "output": out_wav, "mode": "extract_fallback"}
+        # 没有 demucs 环境：整条音轨里带着参考视频的人声，混进成片会听到别人在说话——
+        # 那不是「参考的 BGM」而是「参考的整条声音」，判为不可用，让调用方去曲库选曲。
+        # 真要旧行为（直接拿整轨）可设 BGM_REUSE_ALLOW_FULL_TRACK=1。
+        if os.getenv("BGM_REUSE_ALLOW_FULL_TRACK", "").strip() not in ("1", "true", "yes"):
+            _log.warning("demucs python 不存在(%s)，参考含口播，拒绝用整条音轨当 BGM", DEMUCS_PYTHON)
+            return {"ok": False,
+                    "error": "参考视频含口播且 demucs 环境不可用（{}），"
+                             "整条音轨带人声不能当 BGM".format(os.path.basename(DEMUCS_PYTHON or "-"))}
+        _log.warning("demucs python 不存在，按 BGM_REUSE_ALLOW_FULL_TRACK 退化为直接抽音轨")
+        full = out_wav.replace("_demucs.wav", "_fulltrack.wav")
+        if os.path.isfile(full) and os.path.getsize(full) > 0:
+            return {"ok": True, "output": full, "mode": "cached"}
+        if _extract_audio(src, full):
+            return {"ok": True, "output": full, "mode": "extract_fallback"}
         return {"ok": False, "error": "参考音频抽取失败"}
 
     tmp = tempfile.mkdtemp(prefix="bgmsep_")

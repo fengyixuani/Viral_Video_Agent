@@ -23,9 +23,19 @@ finish（结束）。重叠检测/去重/仲裁的编排在 loop.py。
 """
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 
 import obs
+
+try:
+    import imageio_ffmpeg
+    _FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
+except Exception:  # pragma: no cover
+    _FFMPEG_BIN = os.getenv("FFMPEG", "ffmpeg")
+
+_AGENT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agentscope.tool import FunctionTool, Toolkit
 from tools.retriever import Retriever
 from tools.vlm import VLMTool
@@ -167,6 +177,94 @@ def normalize_speech(text: str) -> str:
     return re.sub(r"[\s，。！？、,.!?~…\-—:：;；\"'“”‘’()（）]+", "", str(text or "")).lower()
 
 
+# 拍摄现场的口令/语气词/口水话。这些词去掉后没剩下实词的原声 = 废话（见 is_filler_speech）。
+# 按长度倒序剥离，避免"一下"被"一"之类的短词提前吃掉。
+_FILLER_TOKENS = tuple(sorted((
+    "ok", "okay", "然后", "这个", "那个", "就是说", "就是", "等一下", "一下", "等等",
+    "够了", "可以了", "好了", "行了", "齐了", "成了", "展示", "开始", "预备", "准备",
+    "往上", "往下", "往左", "往右", "过来", "过去", "再来", "来", "再", "停",
+    "对对", "对", "好", "行", "嗯", "啊", "哦", "呃", "诶", "唉", "哎",
+), key=len, reverse=True))
+# 剥掉口令后至少要剩这么多实词字，且实词占比不低于此比例，才算"有信息量的口播"
+_FILLER_MIN_CONTENT = 4
+_FILLER_MIN_RATIO = 0.5
+
+
+def is_filler_speech(text: str) -> tuple:
+    """这段原声是不是**拍摄现场的废话**（导演口令/口水话/催促声）。返回 (是不是, 判据)。
+
+    "窗口里有真实口播"不能只看字数：实测成片末两镜保下来的原声是
+    「OK然后捏一捏那个泡沫」和「行行行行行行行行行行往上走这个都够了够了够了」——
+    有真人在说、字数也远超口型护栏的 8 字门槛，但放进成片没有任何信息量。
+    这类段应当换成克隆配音（或换一个没人说话的片段），而不是"保留用户原声"。
+
+    两条判据（都命中现场废话的典型形态）：
+      1) 同一个字/词连着念 3 次以上（"行行行行"、"够了够了够了"）= 现场催促；
+      2) 剥掉口令/语气词后剩下的实词太少（<4 字或不到原文一半）= 只是现场指挥。
+    """
+    s = re.sub(r"[^\w\u4e00-\u9fff]+", "", str(text or "")).lower()
+    if not s:
+        return True, "窗口内没有原声"
+    run = best = 1
+    for a, b in zip(s, s[1:]):
+        run = run + 1 if a == b else 1
+        best = max(best, run)
+    if best >= 3:
+        return True, "同一个字连着念了 {} 次（现场催促声）".format(best)
+    bigrams = [s[i:i + 2] for i in range(len(s) - 1)]
+    for bg in set(bigrams):
+        if bigrams.count(bg) >= 3:
+            return True, "「{}」重复了 {} 次（现场催促声）".format(bg, bigrams.count(bg))
+    body = s
+    for w in _FILLER_TOKENS:
+        body = body.replace(w, "")
+    if len(body) < _FILLER_MIN_CONTENT or len(body) < _FILLER_MIN_RATIO * len(s):
+        return True, "剥掉现场口令/语气词只剩「{}」（{}/{} 字）".format(body, len(body), len(s))
+    return False, ""
+
+
+# 离机位的现场口令/环境人声：字面上像"真实口播"（文本规则兜不住，如「各位姐妹儿直接闭眼冲啊」），
+# 但录进来的电平极低（实测峰值 -29dB，相邻镜头人声峰值 ~0dB），放进成片人耳听不见——
+# ASR 却能识别出文字，于是"有字幕没声音"。峰值与均值**都**低于阈值才判定，避免误伤录得偏轻但可用的口播。
+QUIET_VOICE_MAX_DB = float(os.getenv("AGENT_QUIET_VOICE_MAX_DB", "-18"))
+QUIET_VOICE_MEAN_DB = float(os.getenv("AGENT_QUIET_VOICE_MEAN_DB", "-30"))
+
+
+def window_audio_level(source_path: str, time_range: str):
+    """测某素材取窗内的音频电平（volumedetect），返回 (mean_db, max_db)；测不出返回 (None, None)。"""
+    a, b = _parse_range(time_range)
+    src = source_path or ""
+    if src and not os.path.isabs(src):
+        cand = os.path.join(_AGENT_ROOT, src)
+        src = cand if os.path.isfile(cand) else src
+    if not (src and os.path.isfile(src)):
+        return None, None
+    cmd = [_FFMPEG_BIN, "-hide_banner", "-ss", "{:.3f}".format(max(0.0, a))]
+    if b > a:
+        cmd += ["-t", "{:.3f}".format(max(0.3, b - a))]
+    cmd += ["-i", src, "-vn", "-af", "volumedetect", "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return None, None
+    text = r.stderr.decode("utf-8", "ignore")
+    mean = re.search(r"mean_volume:\s*(-?[\d.]+) dB", text)
+    mx = re.search(r"max_volume:\s*(-?[\d.]+) dB", text)
+    return (float(mean.group(1)) if mean else None,
+            float(mx.group(1)) if mx else None)
+
+
+def is_offmic_quiet(source_path: str, time_range: str) -> tuple:
+    """取窗内的说话声是否小到成片里听不见（离机位口令/环境人声）。返回 (是不是, 判据)。"""
+    mean, mx = window_audio_level(source_path, time_range)
+    if mean is None or mx is None:
+        return False, ""
+    if mx <= QUIET_VOICE_MAX_DB and mean <= QUIET_VOICE_MEAN_DB:
+        return True, ("取窗内原声电平极低（峰值 {:.1f}dB / 均值 {:.1f}dB），"
+                      "是离机位口令/环境人声，成片里听不见").format(mx, mean)
+    return False, ""
+
+
 def _parse_range(text):
     try:
         a, b = str(text).split("-")
@@ -224,10 +322,15 @@ class EditToolbox:
             }
             # whq_clone 链路：素材池带「该片段窗口内是否自带用户真声」的标注（见
             # whq_clone/strategy_out.build_context），召回时透出去让 Agent 优先保留原声。
+            # 现场废话（拍摄口令/口水话）不算「自带口播」：标 true 的话 Agent 会去
+            # place_original，再被拦回来白跑几轮，成片也可能留下一段没信息量的现场录音。
             ws = (self.by_gid.get(gid) or {}).get("whq_speech")
             if isinstance(ws, dict):
-                item["has_original_voice"] = bool(ws.get("has_speech"))
+                filler, why = is_filler_speech(ws.get("text", ""))
+                item["has_original_voice"] = bool(ws.get("has_speech")) and not filler
                 item["speech"] = item["speech"] or ws.get("text", "")
+                if filler and ws.get("has_speech"):
+                    item["original_voice_note"] = "原声是拍摄现场的废话（{}），不要保留".format(why)
             out.append(item)
             if len(out) >= top_k:
                 break

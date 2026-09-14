@@ -29,6 +29,43 @@ except Exception:  # pragma: no cover
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _CAPTION_OK = CAPTION_AVAILABLE
 
+# 旧的定音量混音：BGM 固定 0.32 再 amix。amix 默认 normalize=1 还会把人声再压 6dB，
+# 参考素材录得轻时人声直接被埋（实测配音 -40dB、成片 ASR 42s 只认出 20 字）。只在新链路
+# 跑不起来时兜底用。
+_MIX_FALLBACK = ("[1:a]volume=0.32[bg];"
+                 "[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]")
+
+
+def _mix_filter():
+    """人声优先的 BGM 混音：人声定响度 + BGM 压到人声之下 + 说话时自动闪避。
+
+    三件事一起做，缺一件人声都可能听不清：
+      1) 人声轨 loudnorm 到 AGENT_VOICE_LUFS（默认 -16）——各镜原声/克隆配音的电平差异很大
+         （克隆配音的响度跟着参考素材走，实测能差 19dB），不归一就忽大忽小；
+      2) BGM loudnorm 到 AGENT_BGM_LUFS（默认 -30），先天低人声一档；
+      3) sidechaincompress 以人声为触发，说话时把 BGM 再压 2-3dB，说完自己恢复
+         （阈值 0.1：只有真正说话才触发，环境声不至于让 BGM 全程被压）。
+    amix 必须 normalize=0（默认会把每路都除以路数，等于人声再掉 6dB），末尾 alimiter 防削顶。
+
+    注意闪避的 key 取的是**归一化之前**的人声（asplit 在 loudnorm 前面）：把 key 接在
+    loudnorm 后面会因为 loudnorm 动态模式的内部缓冲与 BGM 支路不同步，实测输出被截短约 2s
+    （12s 的测试片只出 10s）。配音在 tts.py 里已经归一过，所以 key 的电平足够触发。
+
+    实测（8.3s 配音 + BGM，后接 4s 静音）：说话段 -16.0dB / 纯 BGM 段 -28.7dB，人声高出
+    12.7dB；单看 BGM 支路说话中 -37.3dB、说完 -32.2dB，闪避深度 5.1dB。旧的定音量混音同一
+    素材是人声 -32.0dB、BGM -31.8dB，人声只高 0.2dB——等于听不见。
+    """
+    voice = (os.getenv("AGENT_VOICE_LUFS", "-16") or "-16").strip()
+    bgm = (os.getenv("AGENT_BGM_LUFS", "-30") or "-30").strip()
+    return (
+        "[0:a]aresample=44100,asplit=2[v0][vkey];"
+        "[v0]loudnorm=I={v}:TP=-1.5:LRA=11[v1];"
+        "[1:a]aresample=44100,loudnorm=I={b}:TP=-6:LRA=11[bgn];"
+        "[bgn][vkey]sidechaincompress=threshold=0.1:ratio=2:attack=20:release=400[bgduck];"
+        "[v1][bgduck]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+        "alimiter=limit=0.95[a]"
+    ).format(v=voice, b=bgm)
+
 
 def _abspath(path: str) -> str:
     if not path:
@@ -180,11 +217,14 @@ def build_video(clips: list, out_path: str, *, bgm_path: str = "",
         resolved_bgm = _abspath(bgm_path) if bgm_path else ""
         if resolved_bgm and os.path.isfile(resolved_bgm):
             mixed = os.path.join(work, "mixed.mp4")
-            ok, err = _run([_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                            "-i", concat, "-i", resolved_bgm,
-                            "-filter_complex",
-                            "[1:a]volume=0.32[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]",
-                            "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", mixed], 150)
+            base = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", concat, "-i", resolved_bgm]
+            tail = ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", mixed]
+            ok, err = _run(base + ["-filter_complex", _mix_filter()] + tail, 240)
+            if not ok:
+                # 归一化/闪避链跑不起来（旧 ffmpeg 缺 sidechaincompress 等）就退回原来的定音量混音
+                _log.warning("人声优先混音失败，退回固定音量混音：%s", err[:200])
+                ok, err = _run(base + ["-filter_complex", _MIX_FALLBACK] + tail, 150)
             ops.append({"op": "bgm_mix", "bgm": os.path.basename(resolved_bgm), "ok": ok, "error": err[:200]})
             if ok:
                 final = mixed
@@ -195,3 +235,39 @@ def build_video(clips: list, out_path: str, *, bgm_path: str = "",
         return {"output": out_path, "ops": ops, "error": "", "clip_count": len(seg_paths)}
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def mix_bgm(video_path: str, bgm_path: str) -> dict:
+    """给已剪好的成片**原地**补混 BGM（临时文件写好后 replace 回原路径）。
+
+    供「曲库选曲延后到成片出来之后」的链路用：先无 BGM 出片 → 按成片内容选曲 →
+    再把选中的 BGM 混进去，视频 uri 不变。混音链与 build_video 一致（人声优先 +
+    闪避，失败退回定音量）。返回 {ok, error}。
+    """
+    video_abs, bgm_abs = _abspath(video_path), _abspath(bgm_path)
+    if not (video_abs and os.path.isfile(video_abs)):
+        return {"ok": False, "error": "成片文件不存在：{}".format(video_path)}
+    if not (bgm_abs and os.path.isfile(bgm_abs)):
+        return {"ok": False, "error": "BGM 文件不存在：{}".format(bgm_path)}
+    fd, mixed = tempfile.mkstemp(prefix="bgmmix_", suffix=".mp4",
+                                 dir=os.path.dirname(video_abs))
+    os.close(fd)
+    try:
+        base = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", video_abs, "-i", bgm_abs]
+        tail = ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", mixed]
+        ok, err = _run(base + ["-filter_complex", _mix_filter()] + tail, 240)
+        if not ok:
+            _log.warning("补混 BGM 人声优先链失败，退回固定音量混音：%s", err[:200])
+            ok, err = _run(base + ["-filter_complex", _MIX_FALLBACK] + tail, 150)
+        if not ok or not os.path.getsize(mixed):
+            return {"ok": False, "error": "BGM 混音失败：{}".format(err[:200])}
+        os.replace(mixed, video_abs)
+        _log.info("成片补混 BGM 完成 %s + %s", os.path.basename(video_abs), os.path.basename(bgm_abs))
+        return {"ok": True, "error": ""}
+    finally:
+        try:
+            if os.path.isfile(mixed):
+                os.remove(mixed)
+        except OSError:
+            pass

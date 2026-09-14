@@ -73,9 +73,7 @@ def ask_qianfan(messages, model=None, max_tokens=None, temperature=0.2, timeout=
                 time.sleep(retry_sleep)
                 continue
             raise last_error from exc
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("ask_qianfan failed without a captured error")
+    raise last_error or RuntimeError("ask_qianfan failed without a captured error")
 
 
 def strip_json_noise(text):

@@ -46,7 +46,7 @@ def skip_slot(slot_id: str, reason: str = ""):
 
 
 def place_original(slot_id: str, global_asset_id: str, note: str = ""):
-    """把某素材片段以「保留用户原声」的方式放入某 slot：系统会自动把截取窗口吸附到说话人的自然停顿处（保证这一句说完整、不切半句），并把字幕设成窗口内真实念出的原话。**该片段自带原声口播（召回结果里 has_original_voice=true）时优先用本工具**，比 place + tts_clone 更真实。
+    """把某素材片段以「保留用户原声」的方式放入某 slot：系统会自动把截取窗口吸附到说话人的自然停顿处（保证这一句说完整、不切半句），并把字幕设成窗口内真实念出的原话。**该片段自带原声口播（召回结果里 has_original_voice=true）时优先用本工具**，比 place + tts_clone 更真实。原声是拍摄现场的口令/口水话（"行行行往上走这个都够了"）时不算自带口播，本工具会拒绝——那种段请 place + tts_clone。
 
     Args:
         slot_id: 目标槽位 id
@@ -73,6 +73,19 @@ def _utterances(asr_items, gap=SENT_GAP):
     return utts
 
 
+def _text_in_window(asr_items, win_s, win_e):
+    """窗口内**真正念出来**的字。字幕只能用这个，不能用整句文本。"""
+    out = []
+    for it in sorted(asr_items or [], key=lambda x: float(x.get("start") or 0.0)):
+        try:
+            mid = (float(it.get("start")) + float(it.get("end"))) / 2.0
+        except (TypeError, ValueError):
+            continue
+        if win_s <= mid <= win_e:
+            out.append(str(it.get("text") or ""))
+    return "".join(out)
+
+
 def align_original_window(asr_items, start, end, target=None):
     """把 [start, end] 吸附到「说完整句」的窗口。返回 (win_start, win_end, text)。
 
@@ -82,7 +95,12 @@ def align_original_window(asr_items, start, end, target=None):
     关键：素材切片的边界常常**把一句话切成两半**（如"小分子柠檬酸特工负责钻"后面还有话）。
     素材池下发的 asr_items 带了窗口外 ±1.5s 的上下文，这里允许把结束点**延到那句真正说完**
     （最多 EXTEND_TAIL 秒），否则保住了原声却仍然半句被截断。
+
+    返回的 text **一律按最终窗口重算**（``_text_in_window``），不是句组的整句文本：句子起点
+    落在候选窗之前时（实测 S02 那句横跨源 1.2-6.08s，候选窗只有 4.75-6.20），整句文本里
+    有一半的字根本没播出来，拿它当字幕就是「字幕比人说的话多出十几个字」。
     """
+
     utts = [u for u in _utterances(asr_items) if u["end"] > start and u["start"] < end]
     if not utts:
         return round(start, 3), round(end, 3), ""
@@ -99,19 +117,25 @@ def align_original_window(asr_items, start, end, target=None):
         best = None
         for i in range(len(utts)):
             for j in range(i, len(utts)):
-                s = max(start - WIN_LEAD, utts[i]["start"] - WIN_LEAD)
+                # 句首**整句纳入**：不再夹回候选窗(原来是 max(start-WIN_LEAD, ...)，句子起点在
+                # 候选窗之前就只截到半句尾巴)，否则窗口里播的和字幕写的就不是一回事。
+                s = max(0.0, utts[i]["start"] - WIN_LEAD)
                 e = min(end + WIN_TAIL, utts[j]["end"] + WIN_TAIL)
                 span = e - s
                 if span <= 0 or span > target * 1.35:  # 与 voice_policy 的 atempo 上限一致
                     continue
-                text = "".join(u["text"] for u in utts[i:j + 1])
+                text = _text_in_window(asr_items, s, e)
+                if not text:
+                    continue
                 if best is None or span > best[2] - best[1]:
                     best = (text, s, e)
         if best:
-            return round(best[1], 3), round(best[2], 3), best[0]
-    s = max(start - WIN_LEAD, utts[0]["start"] - WIN_LEAD)
+            return round(max(0.0, best[1]), 3), round(best[2], 3), best[0]
+    # 没有整句能装进这个节拍：退回原候选窗（docstring 说的「装不下一整句就退回原窗口」），
+    # 字幕同样按窗口重算 —— 宁可字幕是半句、也要和听到的话逐字一致。
+    s = max(0.0, max(start - WIN_LEAD, utts[0]["start"] - WIN_LEAD))
     e = min(end + WIN_TAIL, utts[-1]["end"] + WIN_TAIL)
-    return round(s, 3), round(e, 3), "".join(u["text"] for u in utts)
+    return round(s, 3), round(e, 3), _text_in_window(asr_items, s, e)
 
 
 @edit_tools.edit_tool_handler("place_original")
@@ -143,6 +167,30 @@ async def _handle_place_original(ctx: dict, action: dict) -> dict:
         degraded = False
         if not text:
             return {"ok": False, "error": "窗口内没有成句的原声；请改用 place"}
+    # 该段的原声已被判定不可用（太短/是现场杂音或 ASR 乱识别，如"哥四妹把脸闭住啊"），
+    # 保留它等于成片里放一段听不懂的杂音 —— 那种情况必须走克隆配音。
+    # 但**只要对窗后拿到的是成句真实口播**（≥ AGENT_LIPSYNC_HARD_CHARS 字）就得保原声：
+    # 画面里的人在说这句话，换配音口型就对不上，这一条优先于编排的 clone 判定。
+    if sid in (ctx.get("allow_tts_slots") or ()) \
+            and len(text.strip()) < int(os.getenv("AGENT_LIPSYNC_HARD_CHARS", "8")):
+        return {"ok": False, "error": (
+            f"{sid} 的原声已判定不可用（太短或只是现场杂音/ASR 乱识别），不能保留原声。"
+            "请对它用 tts_clone 配一段贴合本镜画面的解说。")}
+    # 现场废话不算"可用原声"：字数够、也真有人在说，但内容是拍摄口令/口水话
+    # （"行行行行往上走这个都够了"、"OK然后捏一捏那个泡沫"）。保留它成片就是一段没有
+    # 信息量的现场录音，用户明确说过"原声是没有用的啊 都是废话"。
+    _filler, _why = edit_tools.is_filler_speech(text)
+    if not _filler:
+        # 电平判据：离机位喊的口令字面像正常句子，文本规则兜不住；取窗电平极低
+        # （峰值/均值双阈值）就判为现场杂音，不能当"可用原声"保留。
+        _filler, _why = edit_tools.is_offmic_quiet(
+            seg.get("source_path", ""), "{:.2f}-{:.2f}".format(win_s, win_e))
+    if _filler:
+        return {"ok": False, "error": (
+            f"{sid} 这段原声是拍摄现场的废话（「{text[:24]}」：{_why}），没有信息量，不能保留。"
+            "优先换一个**没有人说话**的片段（retrieve + place）再 tts_clone 配解说；"
+            "本镜画面非用不可时，直接对它 place + tts_clone（口型会略有出入，但好过留一段现场口令）。")}
+
     rng = "{:.2f}-{:.2f}".format(win_s, win_e)
     ctx["placements"][sid] = {
         "global_asset_id": gid, "source_path": seg.get("source_path", ""),

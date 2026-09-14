@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import subprocess
 import tempfile
@@ -29,6 +30,14 @@ except Exception:  # pragma: no cover
 SPLIT_ROOT = os.getenv("VIRAL_VIDEO_SPLIT_ROOT", "/root/chengzhiyang/Viral_Video_Split")
 AGENT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TTS_TIMEOUT = int(os.getenv("AGENT_TTS_TIMEOUT", "600"))
+# 参考音转写要不要一起喂给模型（VoxCPM2 的 prompt_text）：
+#   basic（默认）—— 只给参考音波形，产出**就是配音文案**，不多不少。
+#   ultimate     —— 参考音 + 其转写一起给，音色理论上更贴，但实测输出不可控：会把参考音的
+#                   原话也念出来（14 字文案产出 5.76s/7.84s，回听是「参考原话 + 目标文案」），
+#                   或把文案开头吞掉改写（29 字只念出后 21 字）。
+# 所以默认 basic —— 也让 Agent_tools/tts_clone 那份独立工具和这条主链路出一样的结果。
+# 要回到旧行为：AGENT_TTS_PROMPT_MODE=ultimate。
+PROMPT_MODE = (os.getenv("AGENT_TTS_PROMPT_MODE") or "basic").strip().lower()
 
 
 def _split_env() -> dict:
@@ -75,7 +84,14 @@ def _parse_range(text):
 
 
 def _extract_prompt_wav(src: str, time_range: str, out_wav: str) -> bool:
-    """从参考素材片段抽 16k 单声道 wav 作 CosyVoice 的 prompt 音频。"""
+    """从参考素材片段抽 16k 单声道 wav 作克隆的 prompt 音频。
+
+    别改成 44.1k「保带宽」：VoxCPM2 的 AudioVAE 编码采样率就是 16000
+    （``audio_vae_v2.py`` AudioVAEConfig.sample_rate=16000, out_sample_rate=48000），
+    ``_encode_wav`` 里一律 ``librosa.load(sr=16000)``，48k 输出是生成式扩带宽、不吃
+    参考音的高频。实测喂 44.1k 反而更闷：产出 >8kHz 能量占比 7.6%(3 次 6.1/7.4/9.4)
+    vs 16k 的 15.5%(3 次 14.8/15.7/16.1)——多一道 44.1k→16k 重采样，滚降更狠。
+    """
     start, end = _parse_range(time_range)
     dur = max(0.5, end - start) if end > start else 6.0
     cmd = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
@@ -86,6 +102,47 @@ def _extract_prompt_wav(src: str, time_range: str, out_wav: str) -> bool:
         return r.returncode == 0 and os.path.isfile(out_wav) and os.path.getsize(out_wav) > 0
     except (subprocess.SubprocessError, OSError) as exc:
         _log.warning("prompt wav extract failed: %s", exc)
+        return False
+
+
+def _normalize_loudness(path: str) -> bool:
+    """把克隆出来的 wav 拉到统一的口播响度（AGENT_TTS_LUFS，默认 -16 LUFS）。
+
+    VoxCPM2 zero-shot 会把参考音的**响度**一起克隆，所以配音响度不能交给素材决定：实测参考
+    素材 `干发慕斯-素材4.MOV` 本身 mean -39.2dB，那一轮产出的 7 条配音全在 -40dB 左右，混上
+    BGM 后成片里几乎听不见人声（对成片跑 ASR，42s 只认出 20 字）；而参考音正常（-21dB）那几轮
+    产出就是 -21dB、能听清。两遍 loudnorm：先测量再按测量值套用，短句也不会被动态段拉飘。
+    """
+    target = (os.getenv("AGENT_TTS_LUFS", "-16") or "").strip()
+    if target.lower() in ("off", "no", "false"):
+        return False
+    try:
+        probe = subprocess.run(
+            [_FFMPEG, "-hide_banner", "-nostats", "-i", path,
+             "-af", "loudnorm=I={}:TP=-1.5:LRA=11:print_format=json".format(target),
+             "-f", "null", os.devnull],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        m = re.search(r"\{[^{}]*input_i[^{}]*\}", probe.stderr.decode("utf-8", "ignore"), re.S)
+        if not m:
+            _log.warning("配音响度归一跳过（loudnorm 没给测量值）")
+            return False
+        meas = json.loads(m.group(0))
+        flt = ("loudnorm=I={}:TP=-1.5:LRA=11:measured_I={}:measured_TP={}:measured_LRA={}"
+               ":measured_thresh={}:linear=true".format(
+                   target, meas["input_i"], meas["input_tp"], meas["input_lra"],
+                   meas["input_thresh"]))
+        tmp = path + ".norm.wav"
+        r = subprocess.run([_FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", path,
+                            "-af", flt, "-ar", "44100", tmp],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        if r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
+            _log.warning("配音响度归一失败（保留原始电平）：%s", r.stderr.decode("utf-8", "ignore")[-160:])
+            return False
+        os.replace(tmp, path)
+        _log.info("配音响度归一：%.1f LUFS -> %s LUFS", float(meas["input_i"]), target)
+        return True
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError) as exc:
+        _log.warning("配音响度归一异常（保留原始电平）：%s", str(exc)[:160])
         return False
 
 
@@ -135,8 +192,8 @@ def clone(ref_source_path: str, ref_time_range: str, ref_speech: str, text: str,
     ref_speech = (ref_speech or "").strip()
     if not text:
         return {"ok": False, "error": "缺少要配音的文案 text"}
-    if not ref_speech:
-        return {"ok": False, "error": "参考片段没有口播文本(speech)，无法做 zero-shot 克隆"}
+    if PROMPT_MODE == "ultimate" and not ref_speech:
+        return {"ok": False, "error": "参考片段没有口播文本(speech)，无法做 ultimate 克隆"}
     src = _abspath(ref_source_path)
     if not src or not os.path.isfile(src):
         return {"ok": False, "error": f"参考素材不存在：{ref_source_path}"}
@@ -151,7 +208,10 @@ def clone(ref_source_path: str, ref_time_range: str, ref_speech: str, text: str,
         if not _extract_prompt_wav(src, ref_time_range, prompt_wav):
             return {"ok": False, "error": "参考音频抽取失败"}
         with open(prompt_asr, "w", encoding="utf-8") as fh:
-            json.dump({"results": [{"text": ref_speech}]}, fh, ensure_ascii=False)
+            # basic 模式写空转写：后端(run_voxcpm2_zero_shot.py)据此只按参考音波形克隆，
+            # 产出就是 text 本身；写了转写就是 ultimate cloning，会多念参考原话/吞开头。
+            json.dump({"results": [{"text": ref_speech if PROMPT_MODE == "ultimate" else ""}]},
+                      fh, ensure_ascii=False)
         os.makedirs(os.path.dirname(_abspath(out_wav)) or ".", exist_ok=True)
         env = dict(os.environ)
         # 清掉会污染 TTS 专用解释器导入的变量（PYTHONPATH=src、PYTHONHOME 等），
@@ -172,6 +232,7 @@ def clone(ref_source_path: str, ref_time_range: str, ref_speech: str, text: str,
         outp = _abspath(out_wav)
         if not os.path.isfile(outp) or os.path.getsize(outp) == 0:
             return {"ok": False, "error": "声音克隆未产出音频"}
+        _normalize_loudness(outp)   # 参考音录得轻不能让配音也轻，见函数注释
         return {"ok": True, "output": out_wav, "duration": _wav_duration(outp)}
     finally:
         for p in (prompt_wav, prompt_asr):

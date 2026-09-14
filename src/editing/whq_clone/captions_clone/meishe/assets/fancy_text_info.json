@@ -1,0 +1,1152 @@
+[
+    {
+        "type": "general",
+        "styleId": "EE1F2B4B-BACF-4199-AFBB-72BF0583FAC6",
+        "display_name": "Scroll Reveal",
+        "display_name_zh": "简约标签",
+        "style_tags": [
+            "scroll",
+            "reveal",
+            "explanation",
+            "elegant"
+        ],
+        "description": "标签展开花字，类似铺开标签进行文字说明，适合补充解释或知识科普"
+    },
+    {
+        "type": "general",
+        "styleId": "EE312958-1892-464E-9E4B-A92F8612DF1F",
+        "display_name": "",
+        "display_name_zh": "许愿星",
+        "style_tags": [
+            "cute",
+            "dreamy",
+            "star",
+            "decoration",
+            "daily"
+        ],
+        "description": "许愿星样式，以淡紫色飘带搭配星星与渐变翅膀做点缀，风格软萌梦幻，适合日常vlog、手账分享类vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "9A6B60FE-E951-45AB-A9C6-B1FF9104C18A",
+        "display_name": "",
+        "display_name_zh": "劲爆",
+        "style_tags": [
+            "fancy-text",
+            "neon",
+            "decoration",
+            "daily",
+            "food",
+            "praise",
+            "impact",
+            "fire"
+        ],
+        "description": "劲爆花字，属醒目类装饰，粗体红字加火焰光效，适合综艺、好物测评vlog、探店vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "543703F9-7435-4F0F-8D79-8311B13DB288",
+        "display_name": "",
+        "display_name_zh": "旅行去",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "daily",
+            "travel"
+        ],
+        "description": "旅行去花字，配卡通行李箱和小车，风格软萌，适配综艺、旅行 vlog、日常出游 vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "AF8D7FC5-8A0B-45CD-BE81-CC3F09D910B8",
+        "display_name": "",
+        "display_name_zh": "咬一口苹果",
+        "style_tags": [
+            "hand-drawn",
+            "cute",
+            "daily",
+            "food",
+            "healing"
+        ],
+        "description": "咬一口苹果样式，配手绘粉苹果，风格清新软萌，适配美食 vlog、日常随食 vlog、治愈类生活短视频"
+    },
+    {
+        "type": "general",
+        "styleId": "D22AEB7C-5BC5-4A12-9E46-314067C7DD0E",
+        "display_name": "",
+        "display_name_zh": "蓝色泡泡",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "label",
+            "daily",
+            "travel",
+            "summer",
+            "healing"
+        ],
+        "description": "蓝色泡泡样式，淡蓝字体配半透圆气泡底，风格清爽柔和，适用旅行 vlog、夏日主题短视频"
+    },
+    {
+        "type": "general",
+        "styleId": "DCD76CF5-83B9-4A1A-8165-7A22EBF0DBE2",
+        "display_name": "",
+        "display_name_zh": "马卡龙彩灯",
+        "style_tags": [
+            "cute",
+            "daily",
+            "travel",
+            "parent-child",
+            "healing"
+        ],
+        "description": "马卡龙彩灯样式，甜软治愈，适配旅行 vlog、亲子日常 vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "375F9062-0794-4A5C-AAC6-EB0F027246CF",
+        "display_name": "",
+        "display_name_zh": "超赞!",
+        "style_tags": [
+            "fancy-text",
+            "daily",
+            "food",
+            "energetic",
+            "praise",
+            "impact",
+            "fire"
+        ],
+        "description": "超赞!花字，爆炸框配小表情，风格活泼吸睛，适配综艺、好物测评 vlog、探店 vlog、好物分享类短视频"
+    },
+    {
+        "type": "modular",
+        "contextId": "A735B631-526C-4FBC-8AFC-E4EDB80A4AEF",
+        "display_name": "",
+        "display_name_zh": "开启狂欢",
+        "style_tags": [
+            "fancy-text",
+            "dreamy",
+            "star",
+            "label",
+            "daily",
+            "energetic",
+            "impact",
+            "fire"
+        ],
+        "description": "开启狂欢花字，暖黄票身配白字星星，风格热闹吸睛，适配日常 vlog、手账分享类 vlog、生活记录类短视频"
+    },
+    {
+        "type": "general",
+        "styleId": "6551F5DD-1304-4A5B-8583-E21C0287CF6B",
+        "display_name": "",
+        "display_name_zh": "柠檬便签",
+        "style_tags": [
+            "decoration",
+            "label",
+            "daily",
+            "food",
+            "healing"
+        ],
+        "description": "柠檬便签样式，鲜黄柠檬配软绿叶片与蓝点装饰，风格清新治愈，适配综艺的生活分享环节、日常vlog、手账vlog、美食制作vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "7DE1AE9F-C34E-4893-A8BC-ADBA92C0F23D",
+        "display_name": "",
+        "display_name_zh": "透明底片",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "artistic",
+            "highlight",
+            "explanation",
+            "label",
+            "daily"
+        ],
+        "description": "透明底片样式，白字配半透灰条底，风格简约干净，适合知识科普vlog、极简风生活vlog、文艺类短视频"
+    },
+    {
+        "type": "modular",
+        "contextId": "53CDC64D-3CB6-4AE5-912B-B8F893D6A7E5",
+        "display_name": "",
+        "display_name_zh": "浪漫爱心",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "daily",
+            "love",
+            "romantic"
+        ],
+        "description": "浪漫爱心样式，白框配粉字和彩色小爱心，适配情侣vlog、婚礼相关短视频、日常氛围感vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "1CC598FE-2CF2-4F9D-9BF6-9C53D9DD5CDA",
+        "display_name": "",
+        "display_name_zh": "牛奶咖啡",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "daily",
+            "food"
+        ],
+        "description": "牛奶咖啡花字，暖调圆底配白字，适配美食vlog、日常下午茶vlog、生活氛围感短视频"
+    },
+    {
+        "type": "modular",
+        "contextId": "5E3E9950-6F76-47EF-816F-1836DB57F91A",
+        "display_name": "",
+        "display_name_zh": "梦幻仙境",
+        "style_tags": [
+            "artistic",
+            "dreamy",
+            "star",
+            "neon",
+            "daily",
+            "travel",
+            "love",
+            "romantic"
+        ],
+        "description": "梦幻仙境样式，粉紫色花体字搭配星星闪效，适配综艺的梦幻环节、旅行vlog、氛围感日常vlog、婚礼类短视频"
+    },
+    {
+        "type": "modular",
+        "contextId": "8C365B56-2643-426A-8DCF-0A9467F49F4A",
+        "display_name": "",
+        "display_name_zh": "拥抱春天",
+        "style_tags": [
+            "fancy-text",
+            "decoration",
+            "label",
+            "daily",
+            "spring"
+        ],
+        "description": "拥抱春天花字，鲜绿色圆角条底配白字文字，边角点缀小花草装饰，适合春日出行vlog、春季主题短视频"
+    },
+    {
+        "type": "general",
+        "styleId": "2D14108E-2C99-4469-9DDA-8FE9AC399910",
+        "display_name": "",
+        "display_name_zh": "划重点",
+        "style_tags": [
+            "hand-drawn",
+            "highlight",
+            "explanation",
+            "daily",
+            "emotion"
+        ],
+        "description": "划重点样式，蓝黑白边粗体文字，搭配亮黄手绘圈与双感叹号，无底色，适合知识科普vlog、干货分享vlog、综艺的知识点讲解环节"
+    },
+    {
+        "type": "modular",
+        "contextId": "1EB04EB8-EDFB-4493-82D3-DD5BA76ADD49",
+        "display_name": "",
+        "display_name_zh": "今日碎片",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "artistic",
+            "daily"
+        ],
+        "description": "今日碎片花字，白字搭配底部暖黄细条，风格简约松弛，适合生活vlog、日常随拍、手账式短视频"
+    },
+    {
+        "type": "general",
+        "styleId": "2ECF61EF-3D3A-4D31-AAED-D4735F0428A0",
+        "display_name": "",
+        "display_name_zh": "清凉夏日",
+        "style_tags": [
+            "fancy-text",
+            "decoration",
+            "label",
+            "daily",
+            "travel",
+            "food",
+            "summer",
+            "healing"
+        ],
+        "description": "清凉夏日花字，绿底圆角框配白字，加黄白小花点缀，风格治愈清新，适合夏日出游vlog、冷饮探店vlog、夏季好物分享vlog"
+    },
+    {
+        "type": "modular",
+        "contextId": "0D98DE0D-90C1-4A7B-9E12-7E06BE09D68E",
+        "display_name": "",
+        "display_name_zh": "打卡",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "daily",
+            "travel"
+        ],
+        "description": "打卡样式，白底配红对勾加浅灰字，风格清爽利落，适合自律vlog、学习打卡vlog、日常习惯记录类短视频"
+    },
+    {
+        "type": "general",
+        "styleId": "3CAE9B5B-020A-46B1-9C0B-EBD0E59928EF",
+        "display_name": "",
+        "display_name_zh": "啥啥啥?!",
+        "style_tags": [
+            "fancy-text",
+            "decoration",
+            "daily",
+            "emotion"
+        ],
+        "description": "啥啥啥？！花字，白底配加粗黄字加两侧蓝线装饰，风格生动有网感，适合综艺搞笑环节、日常 reaction 短视频、剧情反转类 vlog"
+    },
+    {
+        "type": "general",
+        "styleId": "6DC288AB-5116-48B6-9579-FCE17FF0818B",
+        "display_name": "",
+        "display_name_zh": "蓝色马克笔",
+        "style_tags": [
+            "marker",
+            "minimal",
+            "title",
+            "unboxing",
+            "review"
+        ],
+        "description": "蓝色马克笔，白色字体，简约风格，适用于开箱测评的片头标题"
+    },
+    {
+        "type": "general",
+        "styleId": "01062AF4-D781-4A7F-AE0C-FA17C5184603",
+        "display_name": "",
+        "display_name_zh": "飘动爱心",
+        "style_tags": [
+            "fancy-text",
+            "animated",
+            "decoration",
+            "love",
+            "romantic",
+            "emotion"
+        ],
+        "description": "浪漫爱心，粉色字体，爱心由内向外飘动逐渐消失， 表达感动的情绪，适用于情感类视频的画面空白处装饰"
+    },
+    {
+        "type": "modular",
+        "contextId": "5BCF266A-76FE-4CCE-88F8-ADBFBC33EFD9",
+        "display_name": "",
+        "display_name_zh": "白色雏菊",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "decoration",
+            "daily",
+            "nature",
+            "healing",
+            "emotion"
+        ],
+        "description": "白色雏菊，温柔治愈系，极简风格，表达日常平淡的情绪，适用于日常volg视频的画面空白处装饰"
+    },
+    {
+        "type": "modular",
+        "contextId": "DD953D5B-EA9A-49AE-AB6E-CCB628CE4A58",
+        "display_name": "",
+        "display_name_zh": "余额充值",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "highlight",
+            "explanation",
+            "daily",
+            "travel"
+        ],
+        "description": "余额充值，简约现代风格，适用于旅行vlog，日常vlog视频的关键信息标注"
+    },
+    {
+        "type": "general",
+        "styleId": "9E7AE0DD-FFF2-4BA8-BB63-BF5414F822E9",
+        "display_name": "",
+        "display_name_zh": "快乐源泉",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "decoration",
+            "label",
+            "daily",
+            "energetic"
+        ],
+        "description": "快乐源泉，云朵对话气泡，简约现代风格，适合日常vlog的视频的 画⾯空⽩处装饰"
+    },
+    {
+        "type": "general",
+        "styleId": "9FDC0AEB-3EF9-4BA7-9725-B130AFC89D72",
+        "display_name": "",
+        "display_name_zh": "羽毛扩散",
+        "style_tags": [
+            "fancy-text",
+            "animated",
+            "decoration"
+        ],
+        "description": "羽毛扩散，以羽毛向四周扩散与小鸟飞过为点缀，适合开箱评测视频中片头的标题"
+    },
+    {
+        "type": "modular",
+        "contextId": "E6D75CAB-D7CB-4E54-901F-7C48AA8D63E6",
+        "display_name": "",
+        "display_name_zh": "好物标记",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "animated",
+            "highlight",
+            "explanation",
+            "transition",
+            "daily",
+            "praise"
+        ],
+        "description": "好物标记，简约现代风格，表达日常平淡的情绪，适配所有题材视频中的关键信息标注、转场"
+    },
+    {
+        "type": "general",
+        "styleId": "1ECF0D90-44E8-4DA3-8A29-86F7CC519C23",
+        "display_name": "",
+        "display_name_zh": "心动信号",
+        "style_tags": [
+            "fancy-text",
+            "neon",
+            "title",
+            "decoration",
+            "love",
+            "romantic",
+            "healing"
+        ],
+        "description": "心动信号，日系清新，以霓虹灯效果为点缀，适配情感类视频中的片头标题以及画面空白处装饰"
+    },
+    {
+        "type": "general",
+        "styleId": "552884C3-528B-4808-ABC4-7950768885D6",
+        "display_name": "",
+        "display_name_zh": "赏花日记",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "title",
+            "spring",
+            "love",
+            "romantic",
+            "energetic",
+            "praise"
+        ],
+        "description": "赏花日记，可爱卡通风格，表达夸赞、喜欢、心动情绪，适用于情感类视频的片头标题"
+    },
+    {
+        "type": "general",
+        "styleId": "27EE68E8-7EDD-4B41-8B10-CA9B6D1217E2",
+        "display_name": "",
+        "display_name_zh": "万圣节巫婆",
+        "style_tags": [
+            "cute",
+            "decoration",
+            "daily",
+            "halloween",
+            "festival",
+            "emotion"
+        ],
+        "description": "万圣节巫婆，可爱卡通风格，无情绪表达，适用于日常vlog中画面空白处装饰"
+    },
+    {
+        "type": "general",
+        "styleId": "08E8076F-DAFB-4D83-A2D1-DBFFBD82643E",
+        "display_name": "",
+        "display_name_zh": "秋天的童话",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "highlight",
+            "explanation",
+            "daily",
+            "food",
+            "autumn"
+        ],
+        "description": "秋天的童话，简约现代风格，适用于日常vlog，开箱测评类视频中人物说话时强调以及关键信息标注"
+    },
+    {
+        "type": "general",
+        "styleId": "9AB80C7A-F4C2-43BB-A403-8DCC77E995D6",
+        "display_name": "",
+        "display_name_zh": "甜蜜爱情",
+        "style_tags": [
+            "neon",
+            "decoration",
+            "love",
+            "romantic"
+        ],
+        "description": "甜蜜爱情，带有霓虹光效质感，适用情感类视频中画面空白处装饰"
+    },
+    {
+        "type": "general",
+        "styleId": "C67A65C9-30F5-4784-926E-F608BE4EC0AB",
+        "display_name": "",
+        "display_name_zh": "音乐CD",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "neon",
+            "highlight",
+            "explanation",
+            "decoration",
+            "daily",
+            "food"
+        ],
+        "description": "音乐CD，简约现代风格，带有霓虹光效质感，适用日常volg，开箱测评视频中画面空白处装饰与关键信息标注"
+    },
+    {
+        "type": "general",
+        "styleId": "FE1C5611-3514-458E-9D63-1316AB36B387",
+        "display_name": "",
+        "display_name_zh": "简约科技",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "modern",
+            "tech",
+            "animated",
+            "title",
+            "transition"
+        ],
+        "description": "简约科技，简约现代风格，适用于开箱测评、日常 Vlog中片头标题与转场"
+    },
+    {
+        "type": "general",
+        "styleId": "1CD1C989-3A01-4F4A-82FF-483B5647D5D2",
+        "display_name": "",
+        "display_name_zh": "火焰喷射",
+        "style_tags": [
+            "highlight",
+            "explanation",
+            "decoration",
+            "daily",
+            "impact",
+            "fire"
+        ],
+        "description": "火焰喷射，以火焰状的特效为点缀，适用于日常 Vlog中人物说话的强调与关键信息的标注"
+    },
+    {
+        "type": "general",
+        "styleId": "399EEFB9-CC67-4127-85A8-D90091D3272F",
+        "display_name": "",
+        "display_name_zh": "告白气球",
+        "style_tags": [
+            "fancy-text",
+            "hand-drawn",
+            "cute",
+            "artistic",
+            "love",
+            "romantic",
+            "healing"
+        ],
+        "description": "告白气球花字，画风是柔和手绘卡通质感，贴合恋爱氛围感"
+    },
+    {
+        "type": "general",
+        "styleId": "7AD4A5DB-1578-403C-A4AA-8DAC1A0ABBF8",
+        "display_name": "",
+        "display_name_zh": "万圣节南瓜",
+        "style_tags": [
+            "animated",
+            "highlight",
+            "explanation",
+            "halloween",
+            "festival"
+        ],
+        "description": "万圣节样式，采用动态效果，从左往右徐徐展开，适用于关键信息标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "37193ABC-78A7-474E-A89E-D12001F94799",
+        "display_name": "",
+        "display_name_zh": "彩色方块2D",
+        "style_tags": [
+            "fancy-text",
+            "highlight",
+            "explanation",
+            "festival"
+        ],
+        "description": "红绿拼块花字，类似错落彩块拼接成标题，适合节日祝福标注"
+    },
+    {
+        "type": "general",
+        "styleId": "5854B3B0-6C3C-4A95-A9D2-D073FC95D046",
+        "display_name": "",
+        "display_name_zh": "偶像标条",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "highlight",
+            "explanation",
+            "title",
+            "label",
+            "trendy",
+            "energetic"
+        ],
+        "description": "圆角横幅花字，类似卡通栏目标条，适合板块标题标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "86C4C10C-5018-4963-B4E6-01A8BA8BDB0D",
+        "display_name": "",
+        "display_name_zh": "日常碎片",
+        "style_tags": [
+            "fancy-text",
+            "highlight",
+            "explanation",
+            "label",
+            "daily"
+        ],
+        "description": "椭圆渐变花字，类似虚线椭圆便签，适合日常内容分区标注"
+    },
+    {
+        "type": "general",
+        "styleId": "FCA6A61F-87FE-48EE-8E88-0CC98E2603AE",
+        "display_name": "",
+        "display_name_zh": "哇哦!",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "highlight",
+            "explanation",
+            "label",
+            "emotion",
+            "impact",
+            "fire"
+        ],
+        "description": "爆炸气泡花字，类似卡通对话弹窗，适合情绪感叹标注"
+    },
+    {
+        "type": "general",
+        "styleId": "A11329C1-A867-4EEB-B6DB-0D0A02CCF969",
+        "display_name": "",
+        "display_name_zh": "雏菊标签",
+        "style_tags": [
+            "fancy-text",
+            "highlight",
+            "explanation",
+            "title",
+            "label",
+            "nature"
+        ],
+        "description": "雏菊镶边花字，类似田园圆角标签，适合栏目标题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "2FEF8FC1-3796-47E4-891A-C94ED10BF419",
+        "display_name": "",
+        "display_name_zh": "粽情端午",
+        "style_tags": [
+            "fancy-text",
+            "highlight",
+            "explanation",
+            "label",
+            "dragon-boat-festival",
+            "festival"
+        ],
+        "description": "粽形镶边花字，类似节日横幅标题，适合端午内容标注"
+    },
+    {
+        "type": "general",
+        "styleId": "6CEDF11F-1D8B-4C5B-B107-185DEB96BEF6",
+        "display_name": "",
+        "display_name_zh": "端午安康",
+        "style_tags": [
+            "fancy-text",
+            "hand-drawn",
+            "highlight",
+            "explanation",
+            "label",
+            "dragon-boat-festival",
+            "festival"
+        ],
+        "description": "手绘饰边花字，类似柔边便签条幅，适合端午祝福标注"
+    },
+    {
+        "type": "general",
+        "styleId": "C03E7F6B-1142-4DB4-A265-D2399A11F445",
+        "display_name": "",
+        "display_name_zh": "清新田字",
+        "style_tags": [
+            "fancy-text",
+            "label",
+            "healing"
+        ],
+        "description": "田格衬底绿字，类似田字格范本展示字体，适合字体演示或硬笔练字"
+    },
+    {
+        "type": "general",
+        "styleId": "AB095CC7-54AF-4EDF-BD91-6632944FA29C",
+        "display_name": "",
+        "display_name_zh": "今天周五啦",
+        "style_tags": [
+            "highlight",
+            "explanation",
+            "daily"
+        ],
+        "description": "云朵托衬蓝字，类似浮空云朵呈现短句，适合心情标注或日常提醒"
+    },
+    {
+        "type": "general",
+        "styleId": "F744F9D9-9CB5-4448-83C6-6393D34E8176",
+        "display_name": "",
+        "display_name_zh": "玫瑰镶边",
+        "style_tags": [
+            "fancy-text",
+            "hand-drawn",
+            "highlight",
+            "explanation",
+            "decoration",
+            "nature",
+            "love",
+            "romantic"
+        ],
+        "description": "玫瑰镶边萌字，类似花艺饰边展示标题，适合文案点缀或主题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "F12B28AD-0C2A-4862-8EF2-D9F5ECD15974",
+        "display_name": "",
+        "display_name_zh": "偏偏喜欢你",
+        "style_tags": [
+            "decoration",
+            "love",
+            "romantic",
+            "energetic"
+        ],
+        "description": "粉垫爱心饰字，类似柔底缀心展示情话，适合告白配图或文案装饰"
+    },
+    {
+        "type": "general",
+        "styleId": "71E7B879-B973-401E-83F4-557F93DC505C",
+        "display_name": "",
+        "display_name_zh": "橘色方框",
+        "style_tags": [
+            "fancy-text",
+            "highlight",
+            "explanation",
+            "label"
+        ],
+        "description": "圆角粉框衬白字，类似按键弹窗展示标语，适合界面标识或短句标注"
+    },
+    {
+        "type": "general",
+        "styleId": "A86B91C3-986F-41E0-925C-DB15E663E92C",
+        "display_name": "",
+        "display_name_zh": "嗨起来",
+        "style_tags": [
+            "fancy-text",
+            "label",
+            "energetic",
+            "impact",
+            "fire"
+        ],
+        "description": "爆纹蓝底衬黄字，类似漫画爆炸气泡，适合氛围喊话或活动标题"
+    },
+    {
+        "type": "general",
+        "styleId": "CAB4B150-5A3B-4F40-8F64-997D76A25806",
+        "display_name": "",
+        "display_name_zh": "节日横幅",
+        "style_tags": [
+            "fancy-text",
+            "chinese-style",
+            "highlight",
+            "explanation",
+            "label",
+            "festival"
+        ],
+        "description": "红底回纹缀灯笼，类似喜庆横幅展示字符，适合节庆标题或栏目标注"
+    },
+    {
+        "type": "general",
+        "styleId": "5E1684D6-3129-4956-A6AE-37C4B45CB219",
+        "display_name": "",
+        "display_name_zh": "华夏精英",
+        "style_tags": [
+            "fancy-text",
+            "chinese-style",
+            "highlight",
+            "explanation",
+            "title",
+            "label"
+        ],
+        "description": "剪影星芒衬框字，类似荣誉铭牌展示名号，适合荣誉标注或栏目标题"
+    },
+    {
+        "type": "modular",
+        "contextId": "2A661353-3DE4-4948-BE94-A9813F409DD9",
+        "display_name": "",
+        "display_name_zh": "国货之光",
+        "style_tags": [
+            "fancy-text",
+            "chinese-style",
+            "title",
+            "food",
+            "praise",
+            "impact",
+            "fire"
+        ],
+        "description": "描边黄字配饰线，类似醒目标语排版，适合好物推介或主题标题"
+    },
+    {
+        "type": "modular",
+        "contextId": "86FF64E0-9FE4-4982-9AA9-93C792C2B45D",
+        "display_name": "",
+        "display_name_zh": "奥运精神",
+        "style_tags": [
+            "fancy-text",
+            "label",
+            "sports"
+        ],
+        "description": "红绸健儿衬白字，类似飘带横幅展示标题，适合体育科普或主题介绍"
+    },
+    {
+        "type": "modular",
+        "contextId": "5FEC2037-3142-4C24-BD9E-E697E82B1BB4",
+        "display_name": "",
+        "display_name_zh": "恼火",
+        "style_tags": [
+            "highlight",
+            "explanation",
+            "label",
+            "emotion"
+        ],
+        "description": "云朵托渐变立体字，类似气泡弹窗标注情绪，适合配图表情或文案标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "05890AEF-F1EE-4088-BE59-1BA7959C7971",
+        "display_name": "",
+        "display_name_zh": "白色箭头02",
+        "style_tags": [
+            "minimal",
+            "clean",
+            "animated",
+            "highlight",
+            "explanation",
+            "arrow"
+        ],
+        "description": "白色简约箭头搭配文字，箭头动态指向文本，起到视线引导作用，适合标注要点、步骤解说与内容重点标注"
+    },
+    {
+        "type": "general",
+        "styleId": "18C5B968-3F7D-4C69-89A8-00A286E0791A",
+        "display_name": "",
+        "display_name_zh": "星光闪闪",
+        "style_tags": [
+            "fancy-text",
+            "dreamy",
+            "star",
+            "title",
+            "daily",
+            "parent-child",
+            "healing"
+        ],
+        "description": "鎏金闪钻花字，字体带细碎星光闪烁特效，暖调华丽质感，适合育儿日常、短视频封面与暖心标题文案"
+    },
+    {
+        "type": "modular",
+        "contextId": "1FE7F8D5-6227-4FDB-A3DB-F5BFA3F295D5",
+        "display_name": "",
+        "display_name_zh": "爱心泡泡",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "decoration",
+            "daily",
+            "festival",
+            "love",
+            "romantic",
+            "healing"
+        ],
+        "description": "柔美浪漫风艺术花字，字体线条温婉雅致，自带氛围感装饰效果，适合婚恋记录、情侣日常、节日告白与温情短视频标题"
+    },
+    {
+        "type": "modular",
+        "contextId": "37B805B7-1A75-43D6-BC84-644DDC7C7E28",
+        "display_name": "",
+        "display_name_zh": "好运锦鲤",
+        "style_tags": [
+            "fancy-text",
+            "chinese-style",
+            "highlight",
+            "explanation",
+            "title",
+            "decoration",
+            "festival",
+            "good-luck"
+        ],
+        "description": "国潮吉祥风花字，搭配锦鲤祥瑞装饰元素，寓意顺遂好运，适合节日祝福、祈福文案、升学转运及喜庆短视频标题标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "5DA9CEA7-2400-4EFD-ADCD-BCBF3C85CF5A",
+        "display_name": "",
+        "display_name_zh": "童年",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "highlight",
+            "explanation",
+            "title",
+            "decoration",
+            "daily"
+        ],
+        "description": "简约通用款装饰花字，版式清爽百搭，适配日常 vlog、育儿分享、好物介绍、生活随笔类短视频标题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "CC2D7F55-2A66-4D9E-A7A4-BAF4AC8A1C19",
+        "display_name": "",
+        "display_name_zh": "致青春",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "highlight",
+            "explanation",
+            "title",
+            "graduation",
+            "youth",
+            "healing"
+        ],
+        "description": "文艺怀旧风花字，字体清新雅致，氛围感满满，适合毕业留念、校园回忆、青春纪实、同窗纪念类短视频标题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "295B97EF-030C-4FA0-A87B-E4E0E6307AE0",
+        "display_name": "",
+        "display_name_zh": "涂鸦字幕01",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "hand-drawn",
+            "highlight",
+            "explanation",
+            "title",
+            "decoration"
+        ],
+        "description": "百搭简约装饰花字，造型清爽耐看、排版简洁，适配日常 vlog、育儿记录、好物分享、生活随笔各类短视频标题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "890B8478-2525-4E20-B554-7263FCDA5E99",
+        "display_name": "",
+        "display_name_zh": "百搭艺术字",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "title",
+            "daily",
+            "review",
+            "lively"
+        ],
+        "description": "简约百搭艺术花字，版式干净大方，风格轻快活泼，适合综艺字幕、日常 Vlog、好物测评、生活随拍等短视频标题添加"
+    },
+    {
+        "type": "general",
+        "styleId": "24B6C9A3-247D-4F65-9499-55F1B233A3A5",
+        "display_name": "",
+        "display_name_zh": "抽象几何",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "modern",
+            "tech",
+            "decoration",
+            "daily",
+            "food"
+        ],
+        "description": "现代几何造型花字，搭配多边形、色块等抽象几何装饰，潮流简约，适合潮流 Vlog、时尚穿搭、综艺片头、好物探店与创意短视频标题"
+    },
+    {
+        "type": "general",
+        "styleId": "71B5163D-5CA3-4821-B9C4-BE7DC2EEAC36",
+        "display_name": "",
+        "display_name_zh": "彩虹小心心",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "highlight",
+            "explanation",
+            "decoration",
+            "daily",
+            "birthday",
+            "parent-child"
+        ],
+        "description": "可爱马卡龙配色花字，环绕彩虹与爱心装饰，画风软萌活泼，适合育儿日常、亲子 Vlog、生日纪念、萌娃短视频与甜系综艺字幕标注"
+    },
+    {
+        "type": "general",
+        "styleId": "B2A6F204-88DA-4B98-B994-5AD208D70829",
+        "display_name": "",
+        "display_name_zh": "春季旅行攻略",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "cute",
+            "animated",
+            "highlight",
+            "explanation",
+            "title"
+        ],
+        "description": "活泼灵动卡通花字，配色清爽讨喜，自带简易动态装饰，适配综艺字幕、亲子 Vlog、日常好物分享、萌娃记录类视频标题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "A4D44AC7-29B7-4221-BB73-3915ACFC56F0",
+        "display_name": "",
+        "display_name_zh": "西瓜冰",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "cute",
+            "highlight",
+            "explanation",
+            "daily",
+            "food"
+        ],
+        "description": "清凉西瓜冰爽风花字，搭配西瓜、冰晶元素，配色清爽鲜活，适合夏日美食 Vlog、节气科普、冷饮探店、亲子日常与夏季综艺字幕标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "85A9B8C4-2AE7-47A8-AADC-9E404AB7F9EE",
+        "display_name": "",
+        "display_name_zh": "爱你鱿",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "highlight",
+            "explanation",
+            "daily",
+            "food",
+            "parent-child",
+            "love"
+        ],
+        "description": "谐音趣味萌系花字，融入鱿鱼卡通元素，巧用‘爱你鱿（爱你呦）’谐音梗，俏皮软萌，适合情侣日常、美食探店、亲子 Vlog、轻松综艺趣味字幕标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "3B059F4A-9E31-44C0-A7F4-AFB2AB818604",
+        "display_name": "",
+        "display_name_zh": "元气偶像",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "title",
+            "daily",
+            "graduation",
+            "youth",
+            "trendy",
+            "energetic"
+        ],
+        "description": "潮流活力花字，设计动感亮眼，青春氛围感足，适合偶像应援、娱乐综艺、穿搭 Vlog、人物特写类视频标题使用"
+    },
+    {
+        "type": "modular",
+        "contextId": "0B61E70F-0DED-4B28-8239-6D643C0E94E5",
+        "display_name": "",
+        "display_name_zh": "玫瑰花",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "decoration",
+            "daily",
+            "nature",
+            "festival",
+            "love",
+            "romantic"
+        ],
+        "description": "浪漫柔美花字，搭配玫瑰装饰元素，氛围感浓郁，适合情侣短片、节日告白、婚礼记录、温情 Vlog 与情感综艺标题"
+    },
+    {
+        "type": "general",
+        "styleId": "0231D505-1CB2-44BF-B19A-A4370875B75A",
+        "display_name": "",
+        "display_name_zh": "小蜜蜂",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "highlight",
+            "explanation",
+            "title",
+            "daily",
+            "nature",
+            "parent-child"
+        ],
+        "description": "软萌童趣花字，搭配小蜜蜂卡通纹样，配色鲜活可爱，适合萌娃日常、亲子 Vlog、少儿综艺、田园生活记录的标题标注"
+    },
+    {
+        "type": "modular",
+        "contextId": "F4409633-1E93-4C40-A381-9592F7EBE803",
+        "display_name": "",
+        "display_name_zh": "冰淇淋",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "cute",
+            "decoration",
+            "daily",
+            "food",
+            "summer"
+        ],
+        "description": "甜美可爱风花字，搭配冰淇淋相关装饰，配色软嫩清爽，适合美食探店、夏日 Vlog、亲子日常、休闲综艺字幕使用"
+    },
+    {
+        "type": "modular",
+        "contextId": "88245AB4-40CB-46D9-9080-EC8E8036B6C6",
+        "display_name": "",
+        "display_name_zh": "毕业季",
+        "style_tags": [
+            "fancy-text",
+            "artistic",
+            "highlight",
+            "explanation",
+            "title",
+            "daily",
+            "graduation",
+            "youth"
+        ],
+        "description": "青春文艺花字，满含校园怀旧氛围，适合毕业留念、校园 vlog、同窗纪实、青春短片标题标注"
+    },
+    {
+        "type": "general",
+        "styleId": "E3AF762A-69E6-4EB2-A144-8C9454ECBDD1",
+        "display_name": "",
+        "display_name_zh": "绿绿茸茸",
+        "style_tags": [
+            "fancy-text",
+            "minimal",
+            "clean",
+            "daily",
+            "travel",
+            "nature",
+            "healing"
+        ],
+        "description": "清新森系花字，绿色自然系配色，质感简约治愈，适合田园风光、绿植日常、出游 Vlog、生活纪实类视频标题"
+    },
+    {
+        "type": "general",
+        "styleId": "C572E368-0471-4D7C-A95D-883B33DFDD4D",
+        "display_name": "",
+        "display_name_zh": "好感度",
+        "style_tags": [
+            "fancy-text",
+            "cute",
+            "highlight",
+            "explanation",
+            "title",
+            "daily",
+            "love",
+            "romantic"
+        ],
+        "description": "软萌甜系花字，风格俏皮温馨，适合情侣日常、恋爱 vlog、甜宠综艺、告白互动类视频标题标注"
+    }
+]

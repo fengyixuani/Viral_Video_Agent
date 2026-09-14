@@ -7,7 +7,8 @@
   ``/incommonuserr``；鉴权用 payload 里的 ``channel``（= as_core.WENCHAIN_API_KEY，
   默认 ``wangpantob_all_video_copy``），无独立 token。
 - seedream 图生图的参考图可直接用 **base64 data URI**（实测 code=0），因此产品参考帧
-  无需先传公网 BOS；seedance 首帧则用 seedream 返回的公网 bos_url（本身即公网直链）。
+  无需先传公网 BOS；seedance 图片同样接受 base64 data URL（实测 80–110KB 的 jpg OK，多图时
+  每张须带 ``role``），所以商品参考帧可以直喂 seedance，不必再经 seedream 转成公网 bos_url。
 
 所有函数都是阻塞的（requests / ffmpeg），调用方用 ``asyncio.to_thread`` 包起来。
 """
@@ -38,9 +39,17 @@ except Exception:  # pragma: no cover
 # 模型（见 t2i.md 速查表）
 T2I_MODEL = os.getenv("AIGC_T2I_MODEL", "doubao-seedream-5-0-260128")
 I2V_MODEL = os.getenv("AIGC_I2V_MODEL", "doubao-seedance-2-0")
-# 竖屏 9:16 规格
-T2I_SIZE = os.getenv("AIGC_T2I_SIZE", "1664x2368")
+# 竖屏 9:16 规格。1440x2560 = 0.5625，和用户素材帧（多为 1080x1920）、seedance 的 --ratio 9:16
+# 以及最终成片完全一致。此前默认的 1664x2368 其实是 0.703（≈5:7），图生图时模型被迫重新构图，
+# 商品外观在"参考帧→首帧→视频"链路上要被重构两次，是生成商品不像真实商品的一大来源。
+T2I_SIZE = os.getenv("AIGC_T2I_SIZE", "1440x2560")
 ASPECT_RATIO = os.getenv("AIGC_ASPECT", "9:16")
+# seedance 2.0 默认会顺带生成背景音乐/音效，混进成片就是两条 BGM 打架。这句约束追加在每条
+# 视频 prompt 末尾；模型不一定听话，所以落地后还会用 strip_audio 硬删音轨（双保险）。
+NO_AUDIO_HINT = os.getenv("AIGC_NO_AUDIO_HINT",
+                          "。画面只要视频，不要任何背景音乐、音效、人声或旁白，输出静音画面")
+# 产品参考帧抽帧宽度：素材多是 4K，压太小会丢商品纹理细节（图生图吃的就是这些细节）
+FRAME_WIDTH = int(os.getenv("AIGC_FRAME_WIDTH", "1440"))
 T2I_TIMEOUT = int(os.getenv("AIGC_T2I_TIMEOUT", "300"))
 I2V_TIMEOUT = int(os.getenv("AIGC_I2V_TIMEOUT", "900"))
 
@@ -148,7 +157,8 @@ def _extract_video_url(body: dict) -> str:
 def gen_video_i2v(prompt: str, first_frame_url: str, duration_sec, ratio: str = None) -> str:
     """seedance 图生视频：首帧须公网 URL（seedream 输出 bos_url 即可）。返回视频 URL。"""
     dur = _quantize_duration(duration_sec)
-    directive = "%s  --ratio %s  --dur %d" % ((prompt or "").strip(), ratio or ASPECT_RATIO, dur)
+    directive = "%s%s  --ratio %s  --dur %d" % ((prompt or "").strip(), NO_AUDIO_HINT,
+                                                ratio or ASPECT_RATIO, dur)
     payload = _base_payload(I2V_MODEL, "i2v")
     payload["seedancepro_options"] = {"content": [
         {"type": "text", "text": directive},
@@ -165,7 +175,8 @@ def gen_video_i2v(prompt: str, first_frame_url: str, duration_sec, ratio: str = 
 def gen_video_t2v(prompt: str, duration_sec, ratio: str = None) -> str:
     """seedance 文生视频（无首帧兜底）。返回视频 URL。"""
     dur = _quantize_duration(duration_sec)
-    directive = "%s  --ratio %s  --dur %d" % ((prompt or "").strip(), ratio or ASPECT_RATIO, dur)
+    directive = "%s%s  --ratio %s  --dur %d" % ((prompt or "").strip(), NO_AUDIO_HINT,
+                                                ratio or ASPECT_RATIO, dur)
     payload = _base_payload(I2V_MODEL, "t2v")
     payload["seedancepro_options"] = {"content": [{"type": "text", "text": directive}]}
     body = _post(payload, I2V_TIMEOUT)
@@ -176,6 +187,64 @@ def gen_video_t2v(prompt: str, duration_sec, ratio: str = None) -> str:
     return url
 
 
+def gen_video_multiref(prompt: str, image_paths, duration_sec, ratio: str = None) -> str:
+    """seedance 多参考图直生视频：本地图片以 base64 data URL 直接喂给 seedance。返回视频 URL。
+
+    实测（2026-08-06）：
+    - seedance 2.0 的 ``image_url.url`` **接受 base64 data URL**（80–110KB 的 jpg，端到端约
+      200s）。此前文档里"base64 首帧会超时、必须公网 URL"的结论只对 2048² 大图成立。
+    - 多张图时**每张必须带 ``role``**，否则网关直接报
+      ``40000002 role must be specified for image contents``；用 ``reference_image`` 实测 OK。
+    这条路径省掉了"真实参考帧 → seedream 首帧"这一次重绘：商品外观不再被模型重构一遍，
+    是保真度最大的一个来源。VLM 比对结论为"一致"。
+    """
+    paths = [p for p in (image_paths or []) if p and os.path.isfile(p)]
+    if not paths:
+        raise ValueError("gen_video_multiref 需要至少一张本地参考图")
+    dur = _quantize_duration(duration_sec)
+    directive = "%s%s  --ratio %s  --dur %d" % ((prompt or "").strip(), NO_AUDIO_HINT,
+                                                ratio or ASPECT_RATIO, dur)
+    content = [{"type": "text", "text": directive}]
+    for p in paths:
+        content.append({"type": "image_url", "image_url": {"url": _data_uri(p)},
+                        "role": "reference_image"})
+    payload = _base_payload(I2V_MODEL, "i2v")
+    payload["seedancepro_options"] = {"content": content}
+    body = _post(payload, I2V_TIMEOUT)
+    _check_ok(body)
+    url = _extract_video_url(body)
+    if not url:
+        raise RuntimeError("seedance 多参考图缺少 video_url: %s" % json.dumps(body, ensure_ascii=False)[:400])
+    return url
+
+
+def strip_audio(video_path: str) -> bool:
+    """去掉视频自带音轨（seedance 2.0 会顺便生成背景音乐/音效）。
+
+    成片的声音只应来自 BGM + 克隆配音 + 用户原声；生成片段自带的音乐混进去就是两条 BGM
+    打架。prompt 里写"无背景音乐"不可靠（模型仍会配乐），所以落地后再硬删一次音轨。
+    只复制视频流，不重编码。
+    """
+    if not video_path or not os.path.isfile(video_path):
+        return False
+    tmp = video_path + ".noaudio.mp4"
+    cmd = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", video_path,
+           "-c:v", "copy", "-an", tmp]
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+        if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+            os.replace(tmp, video_path)
+            return True
+        _log.warning("strip_audio failed rc=%s %s", r.returncode, r.stderr[-200:])
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        _log.warning("strip_audio error %s", exc)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    return False
+
+
 def extract_frame(video_path: str, timestamp: float, out_jpg: str) -> bool:
     """从本地视频在 timestamp 秒抽一帧存为 jpg（用作产品参考帧）。"""
     if not video_path or not os.path.isfile(video_path):
@@ -183,7 +252,7 @@ def extract_frame(video_path: str, timestamp: float, out_jpg: str) -> bool:
     os.makedirs(os.path.dirname(out_jpg) or ".", exist_ok=True)
     cmd = [_FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
            "-ss", f"{max(0.0, float(timestamp or 0)):.3f}", "-i", video_path,
-           "-frames:v", "1", "-vf", "scale=1080:-2", "-q:v", "3", out_jpg]
+           "-frames:v", "1", "-vf", f"scale={FRAME_WIDTH}:-2", "-q:v", "2", out_jpg]
     try:
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         return r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 0

@@ -15,3 +15,4 @@ imageio-ffmpeg==0.6.0        # 内置 ffmpeg（抽帧 / 探测时长-分辨率 /
 librosa==0.11.0              # BGM 卡点节拍检测（tools/media_probe.detect_music_beats）；缺失→跳过卡点
 numpy==2.4.6                 # librosa 依赖
 Pillow==12.3.0               # 字幕烧录渲染（editing/caption_tool）；缺失→字幕能力降级
+jieba==0.42.1                # 字幕拆块的中文词边界（captions_clone/charstream）；缺失→只按标点断，词可能被切开

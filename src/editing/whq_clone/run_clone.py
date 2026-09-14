@@ -180,7 +180,24 @@ def _cta_original():
     return os.getenv("WHQ_CTA_ORIGINAL", "1") not in ("0", "false", "False")
 
 
-def _assign_cta_original(last_seg, decisions, speech):
+def _gid_for_window(cands, source_path, start, end):
+    """按 (源片, 时间窗重叠最大) 在候选库里反查真实 global_asset_id; 查不到返回 ""。
+
+    CTA 原声句是从逐字 ASR 现切的窗口, 不对应某个候选片段, 但它落在**某个真实素材片段**里。
+    下游(loop._material_brief / 前端 baseline)要靠 gid 查这一镜的画面描述, 填合成 id 会让
+    它们查不到、把这一镜当成"无画面素材"直接跳过(CTA 丢失的根因)。
+    """
+    best, best_ov = "", 0.0
+    for c in cands or []:
+        if c.get("source_path") != source_path:
+            continue
+        ov = min(end, float(c.get("end") or 0.0)) - max(start, float(c.get("start") or 0.0))
+        if ov > best_ov:
+            best, best_ov = c.get("global_asset_id") or "", ov
+    return best
+
+
+def _assign_cta_original(last_seg, decisions, speech, cands=None):
     """结尾 CTA 段：让 **LLM** 从用户所有原声句子里挑一句真正的"购买号召/催单"用作结尾原声
     （与参考对齐、尽量保留用户真声）。找不到则不动（回退克隆，review_script 的 cta_ending 生成号召）。
     不使用写死的关键词正则，纯 LLM 判断。"""
@@ -211,14 +228,17 @@ def _assign_cta_original(last_seg, decisions, speech):
         print("[run_clone] 结尾CTA: 用户原声里无购买号召, 回退克隆生成", flush=True)
         return
     sp, st, en, txt = utts[idx]
+    # gid 用**真实素材片段**的 id(按源片+时间窗重叠反查); 反查不到才退回合成标记。
+    gid = _gid_for_window(cands, sp, st, en) or "cta_original"
     last_seg["best_candidate"] = {"source_path": sp, "start": st, "end": en,
                                   "duration": round(en - st, 2),
-                                  "global_asset_id": "cta_original", "text": txt}
+                                  "global_asset_id": gid, "text": txt}
     last_seg["is_gap"] = False
+    last_seg["cta_original"] = True     # 标记保留在段上, 不再借 gid 传递
     decisions[sid] = {"voice_source": "original", "window_text": txt, "win_start": st,
                       "audio_take": round(en - st, 2), "decision_basis": "cta_original"}
-    print("[run_clone] 结尾CTA用用户原声购买号召(LLM选): {} @{:.1f}-{:.1f} '{}'".format(
-        sp.split("/")[-1], st, en, txt[:24]), flush=True)
+    print("[run_clone] 结尾CTA用用户原声购买号召(LLM选): {} @{:.1f}-{:.1f} gid={} '{}'".format(
+        sp.split("/")[-1], st, en, gid, txt[:24]), flush=True)
 
 
 def discover_from_slug(slug):
@@ -383,7 +403,7 @@ def plan_from_objects(dna_obj, cands, asr, ref_asr_items, stem, *, ref=None,
     # 结尾 CTA 段优先用**用户原声里的购买号召**（如"赶紧吧/链接放下面"）——与参考视频对齐、
     # 尽量保留用户原声；用户没有这类原声时才回退克隆生成 CTA（review_script cta_ending 兜底）。
     if segments and _cta_original():
-        _assign_cta_original(segments[-1], decisions, speech)
+        _assign_cta_original(segments[-1], decisions, speech, cands=cands)
 
     apply_voice_windows(segments, decisions)
 

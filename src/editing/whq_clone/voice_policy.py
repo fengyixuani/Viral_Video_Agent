@@ -24,6 +24,14 @@ import subprocess
 
 from _common import REPO, legacy
 
+# 现场废话(拍摄口令/口水话/催促声)判定：与 Agent 侧共用同一份实现，保证"编排判 original"
+# 和"Agent 允许克隆配音"口径一致。拿不到(独立跑、缺 agentscope)时退化为不做废话过滤。
+try:
+    from editing.tools import is_filler_speech
+except Exception:  # pragma: no cover
+    def is_filler_speech(_text):
+        return False, ""
+
 CV_PYTHON = os.getenv("WHQ_CV_PYTHON", "/root/miniconda3/bin/python3.13")
 FACE_MODEL = os.getenv(
     "WHQ_FACE_MODEL",
@@ -243,6 +251,9 @@ def decide(manifest, speech_records):
         rec = rec_by_path.get(src)
         text, coverage, clean_end = window_speech(rec, start, take)
         has_speech = len(text) >= MIN_SPEECH_CHARS and coverage >= MIN_SPEECH_COVERAGE
+        # 字数/覆盖率够也可能只是现场口令("行行行行往上走这个都够了"), 保留它成片就是一段
+        # 没有信息量的现场录音 -> 判克隆。
+        filler, filler_why = is_filler_speech(text) if has_speech else (False, "")
         # 原声音频只截到最后一个完整字的边界(不切半个字); 无口播段无意义, 保持 take
         audio_take = round(max(0.0, clean_end - start), 3) if clean_end > start else take
         audio_take = min(audio_take, take)
@@ -253,6 +264,10 @@ def decide(manifest, speech_records):
             d["voice_source"] = "clone"
             d["decision_basis"] = ("窗口无有效口播(字数{}/覆盖率{:.0%}), 用克隆配音"
                                    .format(len(text), coverage))
+        elif filler:
+            d["voice_source"] = "clone"
+            d["decision_basis"] = ("窗口原声是拍摄现场的废话「{}」({}), 没有信息量, 用克隆配音"
+                                   .format(text[:24], filler_why))
         elif atempo < MIN_ATEMPO:
             d["voice_source"] = "clone"
             d["decision_basis"] = ("窗口有口播但素材被拉伸{:.2f}x, 原声需放慢至{:.2f}倍"
